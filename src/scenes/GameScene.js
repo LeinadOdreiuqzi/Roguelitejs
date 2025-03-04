@@ -112,6 +112,7 @@ export default class GameScene extends Phaser.Scene {
     this.floorTiles = this.add.group();
     this.wallTiles = this.physics.add.staticGroup();
     this.doorTiles = this.add.group();
+    this.roomMarkers = this.add.group(); // Grupo para los marcadores de las habitaciones
 
     this.minimap = this.add.graphics();
     this.minimap.setDepth(1001);
@@ -223,8 +224,24 @@ export default class GameScene extends Phaser.Scene {
   }
 
   renderRoom(room) {
+    if (!room) {
+      console.warn("Attempted to render an undefined room");
+      return;
+    }
+
+    // Clear previous minimap text objects
+    this.rooms.forEach(r => {
+      if (r.minimapText) {
+        r.minimapText.destroy();
+        r.minimapText = null;
+      }
+    });
+
+    // Limpiar las capas anteriores
     this.floorTiles.clear(true, true);
     this.wallTiles.clear(true, true);
+    this.doorTiles.clear(true, true);
+    this.roomMarkers.clear(true, true); // Limpiar los marcadores anteriores
 
     const margin = Math.max(ROOM_WIDTH, ROOM_HEIGHT) + 8;
     const left = Math.max(0, 0);
@@ -232,6 +249,7 @@ export default class GameScene extends Phaser.Scene {
     const top = Math.max(0, 0);
     const bottom = Math.min(MAP_HEIGHT - 1, MAP_HEIGHT - 1);
 
+    // Renderizar pisos
     for (let y = top; y <= bottom; y++) {
       for (let x = left; x <= right; x++) {
         const posX = (x - y) * TILE_SIZE;
@@ -257,6 +275,7 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
+    // Renderizar paredes
     for (let y = top; y <= bottom; y++) {
       for (let x = left; x <= right; x++) {
         if (this.dungeon[y] && this.dungeon[y][x] === 1) {
@@ -300,6 +319,32 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
+    // Renderizar marcadores en el centro de cada habitación
+    this.rooms.forEach((room) => {
+      if (
+        typeof room.getLeft !== "function" ||
+        typeof room.getTop !== "function" ||
+        typeof room.getRight !== "function" ||
+        typeof room.getBottom !== "function"
+      ) {
+        return;
+      }
+
+      // Calcular el centro de la habitación en coordenadas de tiles
+      const centerX = Math.floor((room.getLeft() + room.getRight()) / 2);
+      const centerY = Math.floor((room.getTop() + room.getBottom()) / 2);
+
+      // Convertir a coordenadas isométricas
+      const posX = (centerX - centerY) * TILE_SIZE;
+      const posY = (centerX + centerY) * (TILE_SIZE / 2);
+
+      // Crear un marcador rojo (círculo) en el centro
+      const marker = this.add.circle(posX, posY, 5, 0xff0000) // Círculo rojo de radio 5
+        .setOrigin(0.5, 0.5)
+        .setDepth(posY + 10); // Asegurar que esté por encima de los pisos
+      this.roomMarkers.add(marker);
+    });
+
     this.wallTiles.refresh();
     this.updateMinimap();
   }
@@ -310,17 +355,30 @@ export default class GameScene extends Phaser.Scene {
     this.minimap.clear();
     const scale = 2;
 
-    this.rooms.forEach((room) => {
-      // Check if room methods exist before using them
-      if (typeof room.getLeft !== 'function' || typeof room.getTop !== 'function' || 
-          typeof room.getRight !== 'function' || typeof room.getBottom !== 'function') {
-        return; // Skip this room if any required method is missing
+    // Add room counter
+    const roomCounterText = this.add.text(5, 15, `Rooms: ${this.rooms.length}`, {
+      fontSize: '12px',
+      fill: 'white',
+    }).setOrigin(0, 0);
+    this.rooms.forEach((room, index) => {
+      if (
+        typeof room.getLeft !== "function" ||
+        typeof room.getTop !== "function" ||
+        typeof room.getRight !== "function" ||
+        typeof room.getBottom !== "function"
+      ) {
+        return;
       }
-      
+
       const left = (room.getLeft() - room.getTop()) * scale;
       const top = (room.getTop() + room.getLeft()) * scale;
       const width = (room.getRight() - room.getLeft() + 1) * scale;
       const height = (room.getBottom() - room.getTop() + 1) * scale;
+
+      // Use room's marker color if available or default
+      const roomColor = room.markerColor || 0x999999;
+      this.minimap.fillStyle(roomColor, 0.3);
+      this.minimap.fillRect(left, top, width, height);
 
       this.minimap.fillStyle(
         room === this.currentRoom ? 0x00ff00 : 0x555555,
@@ -333,7 +391,11 @@ export default class GameScene extends Phaser.Scene {
 
     if (this.doorTiles && this.doorTiles.getChildren) {
       this.doorTiles.getChildren().forEach((door) => {
-        if (door && typeof door.x !== 'undefined' && typeof door.y !== 'undefined') {
+        if (
+          door &&
+          typeof door.x !== "undefined" &&
+          typeof door.y !== "undefined"
+        ) {
           const posX = (door.x - door.y) * scale;
           const posY = (door.x + door.y) * scale;
           this.minimap.fillStyle(0xffff00, 1);
@@ -342,7 +404,11 @@ export default class GameScene extends Phaser.Scene {
       });
     }
 
-    if (this.player && typeof this.player.x !== 'undefined' && typeof this.player.y !== 'undefined') {
+    if (
+      this.player &&
+      typeof this.player.x !== "undefined" &&
+      typeof this.player.y !== "undefined"
+    ) {
       const playerPosX = (this.player.x / TILE_SIZE) * scale;
       const playerPosY = (this.player.y / (TILE_SIZE / 2)) * scale;
       this.minimap.fillStyle(0xff0000, 1);
@@ -401,45 +467,84 @@ export default class GameScene extends Phaser.Scene {
 
   movePlayerToSafePosition() {
     const playerPos = this.getPlayerTilePosition();
-    for (let radius = 1; radius <= 10; radius++) {
-      for (let dy = -radius; dy <= radius; dy++) {
-        for (let dx = -radius; dx <= radius; dx++) {
-          if (Math.abs(dx) === radius || Math.abs(dy) === radius) {
-            const tileX = playerPos.x + dx;
-            const tileY = playerPos.y + dy;
-            if (
-              tileX >= 0 &&
-              tileX < MAP_WIDTH &&
-              tileY >= 0 &&
-              tileY < MAP_HEIGHT &&
-              this.dungeon[tileY][tileX] === 0
-            ) {
-              const isoX = (tileX - tileY) * TILE_SIZE;
-              const isoY = (tileX + tileY) * (TILE_SIZE / 2);
-              this.player.setAlpha(0.5);
-              this.player.setPosition(isoX, isoY - 10);
-              this.tweens.add({
-                targets: this.player,
-                alpha: 1,
-                duration: 300,
-                ease: "Power2",
-              });
-              const teleportText = this.add
-                .text(this.player.x, this.player.y - 30, "Unstuck!", {
-                  fontSize: "14px",
-                  color: "#ffffff",
-                  stroke: "#000000",
-                  strokeThickness: 3,
-                })
-                .setDepth(1001);
-              this.tweens.add({
-                targets: teleportText,
-                alpha: 0,
-                y: teleportText.y - 20,
-                duration: 1000,
-                onComplete: () => teleportText.destroy(),
-              });
-              return;
+    const canvasBoundary = {
+      minX: 0,
+      maxX: MAP_WIDTH - 1,
+      minY: 0,
+      maxY: MAP_HEIGHT - 1,
+    };
+
+    // Verificar si el jugador está cerca de una pared interior
+    let nearInnerWall = false;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = playerPos.x + dx;
+        const ny = playerPos.y + dy;
+        if (
+          nx >= 0 &&
+          nx < MAP_WIDTH &&
+          ny >= 0 &&
+          ny < MAP_HEIGHT &&
+          this.dungeon[ny][nx] === 1
+        ) {
+          // Si la pared no está en el límite del lienzo, es una pared interior
+          if (
+            nx !== canvasBoundary.minX &&
+            nx !== canvasBoundary.maxX &&
+            ny !== canvasBoundary.minY &&
+            ny !== canvasBoundary.maxY
+          ) {
+            nearInnerWall = true;
+            break;
+          }
+        }
+      }
+      if (nearInnerWall) break;
+    }
+
+    // Solo mover al jugador si no está cerca de una pared interior
+    if (!nearInnerWall) {
+      for (let radius = 1; radius <= 10; radius++) {
+        for (let dy = -radius; dy <= radius; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            if (Math.abs(dx) === radius || Math.abs(dy) === radius) {
+              const tileX = playerPos.x + dx;
+              const tileY = playerPos.y + dy;
+              if (
+                tileX >= 0 &&
+                tileX < MAP_WIDTH &&
+                tileY >= 0 &&
+                tileY < MAP_HEIGHT &&
+                this.dungeon[tileY][tileX] === 0
+              ) {
+                const isoX = (tileX - tileY) * TILE_SIZE;
+                const isoY = (tileX + tileY) * (TILE_SIZE / 2);
+                this.player.setAlpha(0.5);
+                this.player.setPosition(isoX, isoY - 10);
+                this.tweens.add({
+                  targets: this.player,
+                  alpha: 1,
+                  duration: 300,
+                  ease: "Power2",
+                });
+                const teleportText = this.add
+                  .text(this.player.x, this.player.y - 30, "Unstuck!", {
+                    fontSize: "14px",
+                    color: "#ffffff",
+                    stroke: "#000000",
+                    strokeThickness: 3,
+                  })
+                  .setDepth(1001);
+                this.tweens.add({
+                  targets: teleportText,
+                  alpha: 0,
+                  y: teleportText.y - 20,
+                  duration: 1000,
+                  onComplete: () => teleportText.destroy(),
+                });
+                return;
+              }
             }
           }
         }
