@@ -1,3 +1,4 @@
+// /src/scenes/GameScene.js
 import Phaser from "phaser";
 import {
   generateDungeon,
@@ -16,15 +17,18 @@ export default class GameScene extends Phaser.Scene {
   constructor() {
     super("GameScene");
     this.lightingMode = "perRoom";
-    this.roomLights = new Map(); // Map of room ID to single light
     this.torches = null;
     this.torchLights = [];
+    this.hallwayTorchPoints = []; // Potential hallway torch spawn points
+    this.enclosedSpaces = []; // Enclosed spaces that aren't rooms
     this.spawnMarkerLight = null;
     this.playerLight = null;
     this.visibleLights = new Set();
     this.spawnPoint = null;
-    this.fogOfWar = null;
-    this.fogOfWarEnabled = false;
+    this.totalTorches = 0; // Track total number of spawned torches
+    this.maxTotalTorches = 25; // Increased maximum total torches
+    this.roomDwellTimes = new Map(); // Track how long the player has been in each room
+    this.spaceDwellTimes = new Map(); // Track how long the player has been in each enclosed space
   }
 
   preload() {
@@ -32,6 +36,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   createPlaceholderGraphics() {
+    // [Unchanged placeholder graphics generation code]
     const floorGraphics = this.make.graphics({ x: 0, y: 0, add: false });
     floorGraphics.fillStyle(0x333333, 1);
     floorGraphics.fillRect(0, 0, TILE_SIZE, TILE_SIZE / 2);
@@ -130,14 +135,9 @@ export default class GameScene extends Phaser.Scene {
       .setDepth(1001);
 
     this.currentRoom = rooms[0];
-    this.currentRoom.visited = true;
-    console.log(`Initial room (ID: ${this.currentRoom.id}) visited: ${this.currentRoom.visited}`);
-
-    // Mark rooms 0 to 3 as visited for testing
-    for (let i = 0; i <= 3 && i < rooms.length; i++) {
-      rooms[i].visited = true;
-      console.log(`Room ${i} manually set to visited: ${rooms[i].visited}`);
-    }
+    this.rooms.forEach(room => {
+      room.hasTorch = false; // Initialize hasTorch state for each room
+    });
 
     this.renderRoom(this.currentRoom);
 
@@ -169,17 +169,14 @@ export default class GameScene extends Phaser.Scene {
     this.player.setDepth(1000);
     this.player.setPipeline('Light2D');
 
+    this.lights.setAmbientColor(0x333333);
     this.playerLight = this.lights.addLight(playerX, playerY, 50, 0xffff99, 0.9);
     this.spawnMarkerLight = this.lights.addLight(playerX, playerY, 100, 0xffffff, 0.8);
 
-    this.fogOfWar = this.add.graphics();
-    this.fogOfWar.setDepth(900);
-
-    if (this.lightingMode === "perRoom") {
-      this.lights.setAmbientColor(0x333333);
-      this.setupPerRoomLighting();
-      this.updateRoomLighting(this.currentRoom);
-    }
+    // Precompute hallway torch spawn points
+    this.setupHallwayTorchPoints();
+    // Identify enclosed spaces
+    this.identifyEnclosedSpaces();
 
     this.playerShadow = this.add
       .ellipse(playerX, playerY + 5, 24, 12, 0x000000, 0.3)
@@ -211,80 +208,362 @@ export default class GameScene extends Phaser.Scene {
       .setDepth(1001);
   }
 
-  setupPerRoomLighting() {
-    this.rooms.forEach((room) => {
-      const centerX = (room.getLeft() + room.getRight()) / 2;
-      const centerY = (room.getTop() + room.getBottom()) / 2;
-      const posX = (centerX - centerY) * TILE_SIZE;
-      const posY = (centerX + centerY) * (TILE_SIZE / 2);
-
-      // Offset the light position like the debug light (100 pixels to the right)
-      const lightX = posX + 100;
-      const lightY = posY;
-
-      const light = this.lights.addLight(lightX, lightY, 200, 0xffffff, 0);
-      this.roomLights.set(room.id, light);
-      console.log(`Light created for room ID ${room.id} at (${lightX}, ${lightY}) with radius 200`);
-    });
-  }
-
-  updateRoomLighting(currentRoom) {
-    this.rooms.forEach((room) => {
-      const light = this.roomLights.get(room.id);
-      if (!light) {
-        console.warn(`No light found for room ID ${room.id}`);
-        return;
-      }
-
-      const targetIntensity = room.visited ? 3.0 : 0; // Reduced intensity to 3.0
-      const previousIntensity = light.intensity;
-      light.setIntensity(targetIntensity);
-
-      console.log(`Room ${room.id} visited: ${room.visited}, light intensity: ${light.intensity} (was ${previousIntensity})`);
-
-      // Log light position to confirm it’s correct
-      console.log(`Room ${room.id} light position: (${light.x}, ${light.y})`);
-    });
-  }
-
-  updateFogOfWar() {
-    this.fogOfWar.clear();
-
-    if (!this.fogOfWarEnabled) return;
-
+  setupHallwayTorchPoints() {
+    const hallwayTorchChance = 0.8; // Increased to 80%
+    let hallwayTorchesPlaced = 0;
+    const maxHallwayTorches = 10; // Increased to 10
     const margin = Math.max(ROOM_WIDTH, ROOM_HEIGHT) + 8;
     const left = 0;
     const right = MAP_WIDTH - 1;
     const top = 0;
     const bottom = MAP_HEIGHT - 1;
 
+    let hallwayFloorTiles = [];
     for (let y = top; y <= bottom; y++) {
       for (let x = left; x <= right; x++) {
-        const posX = (x - y) * TILE_SIZE;
-        const posY = (x + y) * (TILE_SIZE / 2);
+        if (this.dungeon[y] && this.dungeon[y][x] === 0) {
+          let isInRoom = false;
+          for (const r of this.rooms) {
+            if (
+              x >= r.getLeft() &&
+              x <= r.getRight() &&
+              y >= r.getTop() &&
+              y <= r.getBottom()
+            ) {
+              isInRoom = true;
+              break;
+            }
+          }
+          if (!isInRoom) {
+            const posX = (x - y) * TILE_SIZE;
+            const posY = (x + y) * (TILE_SIZE / 2);
+            hallwayFloorTiles.push({ x: posX, y: posY });
+          }
+        }
+      }
+    }
 
-        let isInVisitedRoom = false;
+    hallwayFloorTiles.forEach((pos) => {
+      if (hallwayTorchesPlaced >= maxHallwayTorches) return;
+      if (Math.random() < hallwayTorchChance) {
+        this.hallwayTorchPoints.push({ x: pos.x, y: pos.y, hasTorch: false });
+        hallwayTorchesPlaced++;
+      }
+    });
+  }
+
+  identifyEnclosedSpaces() {
+    const visited = Array(MAP_HEIGHT).fill().map(() => Array(MAP_WIDTH).fill(false));
+    const minSpaceSize = 10; // Minimum number of tiles to consider an enclosed space a "large space"
+
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+      for (let x = 0; x < MAP_WIDTH; x++) {
+        if (visited[y][x] || !this.dungeon[y] || this.dungeon[y][x] !== 0) continue;
+
+        // Check if this tile is in a room
+        let isInRoom = false;
         for (const room of this.rooms) {
           if (
             x >= room.getLeft() &&
             x <= room.getRight() &&
             y >= room.getTop() &&
-            y <= room.getBottom() &&
-            room.visited
+            y <= room.getBottom()
           ) {
-            isInVisitedRoom = true;
-            console.log(`Tile at (${x}, ${y}) is in visited room ${room.id}`);
+            isInRoom = true;
             break;
           }
         }
+        if (isInRoom) {
+          visited[y][x] = true;
+          continue;
+        }
 
-        if (!isInVisitedRoom && this.dungeon[y] && this.dungeon[y][x] === 0) {
-          this.fogOfWar.fillStyle(0x000000, 0.9);
-          this.fogOfWar.fillRect(posX - TILE_SIZE / 2, posY - TILE_SIZE / 2, TILE_SIZE, TILE_SIZE / 2);
-          console.log(`Fog of war applied at (${x}, ${y})`);
+        // Perform flood-fill to find the enclosed space
+        const spaceTiles = [];
+        const queue = [{ x, y }];
+        visited[y][x] = true;
+
+        while (queue.length > 0) {
+          const { x: cx, y: cy } = queue.shift();
+          spaceTiles.push({ x: cx, y: cy });
+
+          // Check neighboring tiles
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              const nx = cx + dx;
+              const ny = cy + dy;
+
+              if (
+                nx >= 0 &&
+                nx < MAP_WIDTH &&
+                ny >= 0 &&
+                ny < MAP_HEIGHT &&
+                !visited[ny][nx] &&
+                this.dungeon[ny] &&
+                this.dungeon[ny][nx] === 0
+              ) {
+                let inRoom = false;
+                for (const room of this.rooms) {
+                  if (
+                    nx >= room.getLeft() &&
+                    nx <= room.getRight() &&
+                    ny >= room.getTop() &&
+                    ny <= room.getBottom()
+                  ) {
+                    inRoom = true;
+                    break;
+                  }
+                }
+                if (!inRoom) {
+                  visited[ny][nx] = true;
+                  queue.push({ x: nx, y: ny });
+                }
+              }
+            }
+          }
+        }
+
+        // If the space is large enough, treat it as a pseudo-room
+        if (spaceTiles.length >= minSpaceSize) {
+          let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+          spaceTiles.forEach(tile => {
+            minX = Math.min(minX, tile.x);
+            maxX = Math.max(maxX, tile.x);
+            minY = Math.min(minY, tile.y);
+            maxY = Math.max(maxY, tile.y);
+          });
+          this.enclosedSpaces.push({
+            minX,
+            maxX,
+            minY,
+            maxY,
+            tiles: spaceTiles,
+            hasTorch: false,
+            visited: false, // Keep visited property for potential future use
+            centerX: (minX + maxX) / 2,
+            centerY: (minY + maxY) / 2,
+            tileCount: spaceTiles.length, // Store tile count for spawn logic
+          });
+          console.log(`Enclosed space identified: ${spaceTiles.length} tiles, bounds (${minX}, ${minY}) to (${maxX}, ${maxY})`);
         }
       }
     }
+  }
+
+  spawnTorch(posX, posY, radius, intensity) {
+    if (this.totalTorches >= this.maxTotalTorches) return null; // Prevent spawning if limit reached
+    const torch = this.torches.create(posX, posY - 10, "torch-placeholder")
+      .setDisplaySize(16, 24)
+      .setOrigin(0.5, 1)
+      .setDepth(posY);
+    torch.setPipeline('Light2D');
+    const torchLight = this.lights.addLight(posX, posY - 10, radius, 0xffa500, intensity);
+    this.torchLights.push(torchLight);
+    this.visibleLights.add(torchLight);
+    this.totalTorches++;
+    return torchLight;
+  }
+
+  updateTorches(delta) {
+    const roomTorchChance = 0.95; // Increased to 95%
+    const enclosedSpaceTorchChance = 0.9; // Increased to 90%
+    const largeSpaceThreshold = 100; // Tile count threshold for guaranteed torch in large spaces
+    const spawnCullDistance = 2000; // Culling distance for spawning (pixels)
+    const intensityCullDistance = 1000; // Distance for intensity culling (pixels)
+    const dwellTimeThreshold = 2000; // 2 seconds (in milliseconds) before forcing a torch spawn
+    const deltaSeconds = delta / 1000; // Convert delta from milliseconds to seconds
+
+    // Update room torches
+    const playerTilePos = this.getPlayerTilePosition();
+    const worldX = playerTilePos.x;
+    const worldY = playerTilePos.y;
+
+    this.rooms.forEach((room) => {
+      // Calculate distance to room center
+      const roomCenterX = (room.getLeft() + room.getRight()) / 2;
+      const roomCenterY = (room.getTop() + room.getBottom()) / 2;
+      const roomCenterPosX = (roomCenterX - roomCenterY) * TILE_SIZE;
+      const roomCenterPosY = (roomCenterX + roomCenterY) * (TILE_SIZE / 2);
+      const distance = Phaser.Math.Distance.Between(
+        this.player.x,
+        this.player.y,
+        roomCenterPosX,
+        roomCenterPosY
+      );
+
+      if (distance > spawnCullDistance) {
+        this.roomDwellTimes.delete(room.id); // Reset dwell time if out of range
+        return; // Skip if too far
+      }
+
+      // Check if the player is within the room's bounds (expanded by a buffer)
+      const buffer = 2; // Buffer of 2 tiles in each direction
+      const isInRoomBounds =
+        worldX >= room.getLeft() - buffer &&
+        worldX <= room.getRight() + buffer &&
+        worldY >= room.getTop() - buffer &&
+        worldY <= room.getBottom() + buffer;
+
+      // If the player is in the room bounds, mark it as visited
+      if (isInRoomBounds && !room.visited) {
+        room.visited = true;
+        console.log(`Room ${room.id} marked as visited`);
+      }
+
+      // If the player is in the room bounds, track dwell time
+      if (isInRoomBounds) {
+        const currentDwellTime = (this.roomDwellTimes.get(room.id) || 0) + delta;
+        this.roomDwellTimes.set(room.id, currentDwellTime);
+
+        // If the room doesn't have a torch, try to spawn one
+        if (!room.hasTorch) {
+          console.log(`Player entered room ${room.id}, distance: ${distance.toFixed(2)}`);
+          room.hasTorch = true;
+          if (Math.random() < roomTorchChance) {
+            const floorTiles = [];
+            for (let y = room.getTop(); y <= room.getBottom(); y++) {
+              for (let x = room.getLeft(); x <= room.getRight(); x++) {
+                if (this.dungeon[y] && this.dungeon[y][x] === 0) {
+                  const posX = (x - y) * TILE_SIZE;
+                  const posY = (x + y) * (TILE_SIZE / 2);
+                  floorTiles.push({ x: posX, y: posY });
+                }
+              }
+            }
+            if (floorTiles.length > 0) {
+              const pos = floorTiles[Math.floor(Math.random() * floorTiles.length)];
+              this.spawnTorch(pos.x, pos.y, 150, 1.5);
+              console.log(`Torch spawned in room ${room.id} at (${pos.x}, ${pos.y - 10})`);
+              this.roomDwellTimes.delete(room.id); // Reset dwell time after spawning
+            }
+          } else {
+            console.log(`No torch spawned in room ${room.id} (chance failed)`);
+            // Fallback: Force spawn after dwelling for 2 seconds
+            if (currentDwellTime >= dwellTimeThreshold) {
+              const floorTiles = [];
+              for (let y = room.getTop(); y <= room.getBottom(); y++) {
+                for (let x = room.getLeft(); x <= room.getRight(); x++) {
+                  if (this.dungeon[y] && this.dungeon[y][x] === 0) {
+                    const posX = (x - y) * TILE_SIZE;
+                    const posY = (x + y) * (TILE_SIZE / 2);
+                    floorTiles.push({ x: posX, y: posY });
+                  }
+                }
+              }
+              if (floorTiles.length > 0) {
+                const pos = floorTiles[Math.floor(Math.random() * floorTiles.length)];
+                this.spawnTorch(pos.x, pos.y, 150, 1.5);
+                console.log(`Forced torch spawn in room ${room.id} at (${pos.x}, ${pos.y - 10}) after dwelling`);
+                this.roomDwellTimes.delete(room.id); // Reset dwell time after spawning
+              }
+            }
+          }
+        }
+      } else {
+        this.roomDwellTimes.delete(room.id); // Reset dwell time if player leaves the room
+      }
+    });
+
+    // Update enclosed space torches
+    this.enclosedSpaces.forEach((space, index) => {
+      // Calculate distance to space center
+      const spaceCenterPosX = (space.centerX - space.centerY) * TILE_SIZE;
+      const spaceCenterPosY = (space.centerX + space.centerY) * (TILE_SIZE / 2);
+      const distance = Phaser.Math.Distance.Between(
+        this.player.x,
+        this.player.y,
+        spaceCenterPosX,
+        spaceCenterPosY
+      );
+
+      if (distance > spawnCullDistance) {
+        this.spaceDwellTimes.delete(index); // Reset dwell time if out of range
+        return; // Skip if too far
+      }
+
+      const isInSpaceBounds =
+        worldX >= space.minX - 2 &&
+        worldX <= space.maxX + 2 &&
+        worldY >= space.minY - 2 &&
+        worldY <= space.maxY + 2;
+
+      // If the player is in the space bounds, mark it as visited
+      if (isInSpaceBounds && !space.visited) {
+        space.visited = true;
+        console.log(`Enclosed space ${index} marked as visited`);
+      }
+
+      // If the player is in the space bounds, track dwell time
+      if (isInSpaceBounds) {
+        const currentDwellTime = (this.spaceDwellTimes.get(index) || 0) + delta;
+        this.spaceDwellTimes.set(index, currentDwellTime);
+
+        if (!space.hasTorch) {
+          console.log(`Player entered enclosed space ${index}, distance: ${distance.toFixed(2)}, tiles: ${space.tileCount}`);
+          space.hasTorch = true;
+          // Guarantee a torch for large spaces (>100 tiles), otherwise use the spawn chance
+          const spawnChance = space.tileCount > largeSpaceThreshold ? 1.0 : enclosedSpaceTorchChance;
+          if (Math.random() < spawnChance) {
+            const pos = space.tiles[Math.floor(Math.random() * space.tiles.length)];
+            const posX = (pos.x - pos.y) * TILE_SIZE;
+            const posY = (pos.x + pos.y) * (TILE_SIZE / 2);
+            this.spawnTorch(posX, posY, 150, 1.5);
+            console.log(`Torch spawned in enclosed space ${index} at (${posX}, ${posY - 10})`);
+            this.spaceDwellTimes.delete(index); // Reset dwell time after spawning
+          } else {
+            console.log(`No torch spawned in enclosed space ${index} (chance failed)`);
+            // Fallback: Force spawn after dwelling for 2 seconds
+            if (currentDwellTime >= dwellTimeThreshold) {
+              const pos = space.tiles[Math.floor(Math.random() * space.tiles.length)];
+              const posX = (pos.x - pos.y) * TILE_SIZE;
+              const posY = (pos.x + pos.y) * (TILE_SIZE / 2);
+              this.spawnTorch(posX, posY, 150, 1.5);
+              console.log(`Forced torch spawn in enclosed space ${index} at (${posX}, ${posY - 10}) after dwelling`);
+              this.spaceDwellTimes.delete(index); // Reset dwell time after spawning
+            }
+          }
+        }
+      } else {
+        this.spaceDwellTimes.delete(index); // Reset dwell time if player leaves the space
+      }
+    });
+
+    // Update hallway torches
+    this.hallwayTorchPoints.forEach((point, index) => {
+      if (point.hasTorch) return; // Skip if a torch has already been spawned here
+
+      const distance = Phaser.Math.Distance.Between(
+        this.player.x,
+        this.player.y,
+        point.x,
+        point.y
+      );
+      if (distance > spawnCullDistance) return; // Skip if too far
+
+      const threshold = 400; // Spawn if player is within 400 pixels
+
+      if (distance < threshold) {
+        point.hasTorch = true;
+        this.spawnTorch(point.x, point.y, 200, 1.8);
+        console.log(`Hallway torch ${index} spawned at (${point.x}, ${point.y - 10})`);
+      }
+    });
+
+    // Update torch light intensities based on distance
+    this.torchLights.forEach(light => {
+      const distance = Phaser.Math.Distance.Between(
+        this.player.x,
+        this.player.y,
+        light.x,
+        light.y
+      );
+      if (distance > intensityCullDistance) {
+        light.setIntensity(0); // Disable distant lights
+      } else {
+        light.setIntensity(light.radius === 150 ? 1.5 : 1.8); // Restore intensity
+      }
+    });
   }
 
   renderRoom(room) {
@@ -304,6 +583,7 @@ export default class GameScene extends Phaser.Scene {
     this.torches.clear(true, true);
     this.torchLights.forEach(light => this.lights.removeLight(light));
     this.torchLights = [];
+    this.visibleLights.clear();
 
     const margin = Math.max(ROOM_WIDTH, ROOM_HEIGHT) + 8;
     const left = 0;
@@ -311,8 +591,6 @@ export default class GameScene extends Phaser.Scene {
     const top = 0;
     const bottom = MAP_HEIGHT - 1;
 
-    let roomFloorTiles = [];
-    let hallwayFloorTiles = [];
     for (let y = top; y <= bottom; y++) {
       for (let x = left; x <= right; x++) {
         const posX = (x - y) * TILE_SIZE;
@@ -325,59 +603,44 @@ export default class GameScene extends Phaser.Scene {
             .setDepth(posY);
           floorTile.setPipeline('Light2D');
           this.floorTiles.add(floorTile);
-
-          let isInRoom = false;
-          for (const r of this.rooms) {
-            if (
-              x >= r.getLeft() &&
-              x <= r.getRight() &&
-              y >= r.getTop() &&
-              y <= r.getBottom()
-            ) {
-              isInRoom = true;
-              roomFloorTiles.push({ x: posX, y: posY, roomId: r.id });
-              break;
-            }
-          }
-          if (!isInRoom) {
-            hallwayFloorTiles.push({ x: posX, y: posY });
-          }
         }
       }
     }
 
-    const roomTorchChance = 0.53;
-    const roomsWithTorches = new Set();
-    roomFloorTiles.forEach((pos) => {
-      const roomId = pos.roomId;
-      if (!roomsWithTorches.has(roomId) && Math.random() < roomTorchChance) {
-        const torch = this.torches.create(pos.x, pos.y - 10, "torch-placeholder")
-          .setDisplaySize(16, 24)
-          .setOrigin(0.5, 1)
-          .setDepth(pos.y);
-        torch.setPipeline('Light2D');
-        const torchLight = this.lights.addLight(pos.x, pos.y - 10, 75, 0xffa500, 1.0);
-        this.torchLights.push(torchLight);
-        this.visibleLights.add(torchLight);
-        roomsWithTorches.add(roomId);
+    // Re-spawn torches for rooms that already have them
+    this.rooms.forEach((r) => {
+      if (r.hasTorch) {
+        const floorTiles = [];
+        for (let y = r.getTop(); y <= r.getBottom(); y++) {
+          for (let x = r.getLeft(); x <= r.getRight(); x++) {
+            if (this.dungeon[y] && this.dungeon[y][x] === 0) {
+              const posX = (x - y) * TILE_SIZE;
+              const posY = (x + y) * (TILE_SIZE / 2);
+              floorTiles.push({ x: posX, y: posY });
+            }
+          }
+        }
+        if (floorTiles.length > 0) {
+          const pos = floorTiles[Math.floor(Math.random() * floorTiles.length)];
+          this.spawnTorch(pos.x, pos.y, 150, 1.5);
+        }
       }
     });
 
-    const hallwayTorchChance = 0.3;
-    let hallwayTorchesPlaced = 0;
-    const maxHallwayTorches = 3;
-    hallwayFloorTiles.forEach((pos) => {
-      if (hallwayTorchesPlaced >= maxHallwayTorches) return;
-      if (Math.random() < hallwayTorchChance) {
-        const torch = this.torches.create(pos.x, pos.y - 10, "torch-placeholder")
-          .setDisplaySize(16, 24)
-          .setOrigin(0.5, 1)
-          .setDepth(pos.y);
-        torch.setPipeline('Light2D');
-        const torchLight = this.lights.addLight(pos.x, pos.y - 10, 100, 0xffa500, 1.2);
-        this.torchLights.push(torchLight);
-        this.visibleLights.add(torchLight);
-        hallwayTorchesPlaced++;
+    // Re-spawn torches for enclosed spaces that already have them
+    this.enclosedSpaces.forEach((space) => {
+      if (space.hasTorch) {
+        const pos = space.tiles[Math.floor(Math.random() * space.tiles.length)];
+        const posX = (pos.x - pos.y) * TILE_SIZE;
+        const posY = (pos.x + pos.y) * (TILE_SIZE / 2);
+        this.spawnTorch(posX, posY, 150, 1.5);
+      }
+    });
+
+    // Re-spawn hallway torches that have been activated
+    this.hallwayTorchPoints.forEach((point) => {
+      if (point.hasTorch) {
+        this.spawnTorch(point.x, point.y, 200, 1.8);
       }
     });
 
@@ -419,25 +682,6 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    this.rooms.forEach((room) => {
-      if (
-        typeof room.getLeft !== "function" ||
-        typeof room.getTop !== "function" ||
-        typeof room.getRight !== "function" ||
-        typeof room.getBottom !== "function"
-      ) return;
-
-      const centerX = Math.floor((room.getLeft() + room.getRight()) / 2);
-      const centerY = Math.floor((room.getTop() + room.getBottom()) / 2);
-      const posX = (centerX - centerY) * TILE_SIZE;
-      const posY = (centerX + centerY) * (TILE_SIZE / 2);
-      const marker = this.add.circle(posX, posY, 5, 0xff0000)
-        .setOrigin(0.5, 0.5)
-        .setDepth(posY + 10);
-      marker.setPipeline('Light2D');
-      this.roomMarkers.add(marker);
-    });
-
     this.wallTiles.refresh();
   }
 
@@ -475,13 +719,7 @@ export default class GameScene extends Phaser.Scene {
 
     if (nextRoom !== this.currentRoom) {
       console.log(`Transitioning from room ${this.currentRoom.id} to room ${nextRoom.id}`);
-      if (this.rooms[nextRoomId]) {
-        this.rooms[nextRoomId].visited = true;
-        this.currentRoom = this.rooms[nextRoomId];
-        console.log(`Room ${nextRoomId} visited status: ${this.rooms[nextRoomId].visited}`);
-      } else {
-        console.warn(`Room with ID ${nextRoomId} not found in this.rooms`);
-      }
+      this.currentRoom = this.rooms[nextRoomId];
 
       const roomCenterX = (nextRoom.getLeft() + nextRoom.getRight()) / 2;
       const roomCenterY = (nextRoom.getTop() + nextRoom.getBottom()) / 2;
@@ -492,10 +730,6 @@ export default class GameScene extends Phaser.Scene {
       this.renderRoom(nextRoom);
       this.updateCameraBounds();
       this.cameras.main.fadeIn(250);
-
-      if (this.lightingMode === "perRoom") {
-        this.updateRoomLighting(nextRoom);
-      }
     }
   }
 
@@ -579,7 +813,7 @@ export default class GameScene extends Phaser.Scene {
     return { x: tileX, y: tileY };
   }
 
-  update() {
+  update(time, delta) {
     if (!this.player) return;
 
     const speed = 220;
@@ -605,11 +839,12 @@ export default class GameScene extends Phaser.Scene {
       this.spawnMarkerLight.setPosition(this.player.x, this.player.y);
     }
 
-    if (this.lightingMode === "perRoom") {
-      this.updateRoomLighting(this.currentRoom);
+    if (this.playerLight) {
+      this.playerLight.setPosition(this.player.x, this.player.y);
     }
 
-    this.updateFogOfWar();
+    // Update torches based on proximity
+    this.updateTorches(delta);
 
     if (!this.noclipMode && this.player.body.blocked.none && this.player.body.velocity.lengthSq() < 10) {
       const worldX = Math.floor((this.player.x / TILE_SIZE + this.player.y / (TILE_SIZE / 2)) / 2);
