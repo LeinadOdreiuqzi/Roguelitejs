@@ -1,8 +1,7 @@
 {
     "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
-  "routes": [{ "src": "/(.*)", "dest": "/index.html" }],
-  "builds": [{ "src": "package.json", "use": "@vercel/static-build", "config": { "distDir": "dist" } }],
-  "buildCommand": "pnpm install && pnpm run build",
-  "outputDirectory": "dist"
+    "builds": [{ "src": "package.json", "use": "@vercel/static-build", "config": { "distDir": "dist" } }],
+    "buildCommand": "pnpm install && pnpm run build",
+    "outputDirectory": "dist"
   }
   
