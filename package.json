@@ -12,11 +12,12 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "vite": "^6.2.0",
     "gsap": "^3.12.7",
     "phaser": "^3.88.2",
     "rot-js": "^2.2.1"
   },
   "devDependencies": {
     "vite": "^6.2.0"
-  }
+}
 }
