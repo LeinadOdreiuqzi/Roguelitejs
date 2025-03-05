@@ -17,7 +17,5 @@
     "phaser": "^3.88.2",
     "rot-js": "^2.2.1"
   },
-  "devDependencies": {
-    "vite": "^6.2.0"
-}
+  "devDependencies": {}
 }
