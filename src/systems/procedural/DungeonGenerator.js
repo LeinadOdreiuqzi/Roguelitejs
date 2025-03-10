@@ -1,3 +1,4 @@
+// /src/systems/procedural/DungeonGenerator.js
 import * as ROT from "rot-js";
 import { MAP_WIDTH, MAP_HEIGHT } from "../../utils/Constants.js";
 
@@ -45,6 +46,8 @@ export function generateDungeon() {
     { x: room.x2 + 1, y: Math.floor((room.y1 + room.y2) / 2) },
   ];
 
+  // Optimize room bounds checking by precomputing bounds
+  const roomBounds = new Map();
   rooms.forEach((room, index) => {
     room.id = index;
     room.visited = false;
@@ -76,6 +79,8 @@ export function generateDungeon() {
 
     const roomWidth = right - left + 1;
     const roomHeight = bottom - top + 1;
+
+    roomBounds.set(room.id, { left, right, top, bottom });
 
     if (roomWidth > MAX_ROOM_WIDTH || roomHeight > MAX_ROOM_HEIGHT) {
       const splitRooms = splitRoom(room, dungeon, MAX_ROOM_WIDTH, MAX_ROOM_HEIGHT);
@@ -112,6 +117,12 @@ export function generateDungeon() {
             dungeon[doorY][doorX] = 0;
           }
         }
+        roomBounds.set(splitRoom.id, {
+          left: splitRoom.getLeft(),
+          right: splitRoom.getRight(),
+          top: splitRoom.getTop(),
+          bottom: splitRoom.getBottom(),
+        });
       });
 
       validRooms.push(...splitRooms);
@@ -184,11 +195,12 @@ export function generateDungeon() {
 
       let overlaps = false;
       for (const validRoom of validRooms) {
+        const bounds = roomBounds.get(validRoom.id);
         if (
-          newRoom.getLeft() - 2 <= validRoom.getRight() &&
-          newRoom.getRight() + 2 >= validRoom.getLeft() &&
-          newRoom.getTop() - 2 <= validRoom.getBottom() &&
-          newRoom.getBottom() + 2 >= validRoom.getTop()
+          newRoom.x1 - 2 <= bounds.right &&
+          newRoom.x2 + 2 >= bounds.left &&
+          newRoom.y1 - 2 <= bounds.bottom &&
+          newRoom.y2 + 2 >= bounds.top
         ) {
           overlaps = true;
           break;
@@ -198,6 +210,7 @@ export function generateDungeon() {
       if (!overlaps) {
         validRooms.push(newRoom);
         quadrant.rooms++;
+        roomBounds.set(newRoom.id, { left: newRoom.x1, right: newRoom.x2, top: newRoom.y1, bottom: newRoom.y2 });
 
         const doorPositions = getDoorPositions(newRoom);
         doorPositions.forEach((pos) => {
@@ -213,24 +226,24 @@ export function generateDungeon() {
           }
         });
 
-        for (let y = newRoom.getTop() - 1; y <= newRoom.getBottom() + 1; y++) {
-          for (let x = newRoom.getLeft() - 1; x <= newRoom.getRight() + 1; x++) {
+        for (let y = newRoom.y1 - 1; y <= newRoom.y2 + 1; y++) {
+          for (let x = newRoom.x1 - 1; x <= newRoom.x2 + 1; x++) {
             if (x < canvasBoundary.minX || x > canvasBoundary.maxX || y < canvasBoundary.minY || y > canvasBoundary.maxY) continue;
             dungeon[y][x] = 1;
           }
         }
 
-        for (let y = newRoom.getTop(); y <= newRoom.getBottom(); y++) {
-          for (let x = newRoom.getLeft(); x <= newRoom.getRight(); x++) {
+        for (let y = newRoom.y1; y <= newRoom.y2; y++) {
+          for (let x = newRoom.x1; x <= newRoom.x2; x++) {
             dungeon[y][x] = 0;
           }
         }
 
         if (
-          newRoom.getLeft() - 1 === secondaryBoundary.minX - 1 ||
-          newRoom.getRight() + 1 === secondaryBoundary.maxX + 1 ||
-          newRoom.getTop() - 1 === secondaryBoundary.minY - 1 ||
-          newRoom.getBottom() + 1 === secondaryBoundary.maxY + 1
+          newRoom.x1 - 1 === secondaryBoundary.minX - 1 ||
+          newRoom.x2 + 1 === secondaryBoundary.maxX + 1 ||
+          newRoom.y1 - 1 === secondaryBoundary.minY - 1 ||
+          newRoom.y2 + 1 === secondaryBoundary.maxY + 1
         ) {
           for (let y = secondaryBoundary.minY - 1; y <= secondaryBoundary.maxY + 1; y++) {
             dungeon[y][secondaryBoundary.minX - 1] = 1;
@@ -246,10 +259,8 @@ export function generateDungeon() {
   });
 
   validRooms.forEach((room) => {
-    const left = room.getLeft();
-    const right = room.getRight();
-    const top = room.getTop();
-    const bottom = room.getBottom();
+    const bounds = roomBounds.get(room.id);
+    const { left, right, top, bottom } = bounds;
 
     for (let y = top - 1; y <= bottom + 1; y++) {
       for (let x = left - 1; x <= right + 1; x++) {
@@ -324,29 +335,28 @@ export function generateDungeon() {
 
   const fillEmptySpaces = () => {
     const visitedTiles = new Set();
-    const roomTiles = new Set();
+    const roomTilesSet = new Set();
 
+    // Precompute room tiles set for faster lookup
     validRooms.forEach(room => {
-      for (let y = room.getTop(); y <= room.getBottom(); y++) {
-        for (let x = room.getLeft(); x <= room.getRight(); x++) {
-          roomTiles.add(`${x},${y}`);
+      const bounds = roomBounds.get(room.id);
+      for (let y = bounds.top; y <= bounds.bottom; y++) {
+        for (let x = bounds.left; x <= bounds.right; x++) {
+          roomTilesSet.add(`${x},${y}`);
         }
       }
     });
 
     const floodFill = (startX, startY) => {
       const stack = [[startX, startY]];
-      const tiles = new Set();
-      tiles.add(`${startX},${startY}`);
-      let isRoomPart = false;
+      const tiles = [];
+      const key = `${startX},${startY}`;
+      tiles.push(key);
+      visitedTiles.add(key);
+      let isRoomPart = roomTilesSet.has(key);
 
       while (stack.length > 0) {
         const [x, y] = stack.pop();
-        if (roomTiles.has(`${x},${y}`)) {
-          isRoomPart = true;
-          break;
-        }
-
         const directions = [
           { dx: 0, dy: -1 },
           { dx: 0, dy: 1 },
@@ -357,18 +367,21 @@ export function generateDungeon() {
         for (const dir of directions) {
           const nx = x + dir.dx;
           const ny = y + dir.dy;
-          const key = `${nx},${ny}`;
+          const nextKey = `${nx},${ny}`;
           if (
             nx >= secondaryBoundary.minX &&
             nx <= secondaryBoundary.maxX &&
             ny >= secondaryBoundary.minY &&
             ny <= secondaryBoundary.maxY &&
             dungeon[ny][nx] === 0 &&
-            !visitedTiles.has(key)
+            !visitedTiles.has(nextKey)
           ) {
             stack.push([nx, ny]);
-            tiles.add(key);
-            visitedTiles.add(key);
+            tiles.push(nextKey);
+            visitedTiles.add(nextKey);
+            if (!isRoomPart && roomTilesSet.has(nextKey)) {
+              isRoomPart = true;
+            }
           }
         }
       }
@@ -381,7 +394,7 @@ export function generateDungeon() {
         const key = `${x},${y}`;
         if (dungeon[y][x] === 0 && !visitedTiles.has(key)) {
           const { tiles, isRoomPart } = floodFill(x, y);
-          if (!isRoomPart && tiles.size > 50) {
+          if (!isRoomPart && tiles.length > 50) {
             tiles.forEach(tile => {
               const [tx, ty] = tile.split(',').map(Number);
               dungeon[ty][tx] = 1;
@@ -449,11 +462,12 @@ export function generateDungeon() {
         }
 
         for (const room of validRooms) {
+          const bounds = roomBounds.get(room.id);
           if (
-            x >= room.getLeft() - 2 &&
-            x <= room.getRight() + 2 &&
-            y >= room.getTop() - 2 &&
-            y <= room.getBottom() + 2
+            x >= bounds.left - 2 &&
+            x <= bounds.right + 2 &&
+            y >= bounds.top - 2 &&
+            y <= bounds.bottom + 2
           ) {
             isNearRoom = true;
             break;
@@ -491,8 +505,10 @@ export function generateDungeon() {
         for (let i = 0; i < validRooms.length; i++) {
           if (i === index) continue;
           const otherRoom = validRooms[i];
-          const dx = (room.getLeft() + room.getRight()) / 2 - (otherRoom.getLeft() + otherRoom.getRight()) / 2;
-          const dy = (room.getTop() + room.getBottom()) / 2 - (otherRoom.getTop() + otherRoom.getBottom()) / 2;
+          const boundsA = roomBounds.get(room.id);
+          const boundsB = roomBounds.get(otherRoom.id);
+          const dx = (boundsA.left + boundsA.right) / 2 - (boundsB.left + boundsB.right) / 2;
+          const dy = (boundsA.top + boundsA.bottom) / 2 - (boundsB.top + boundsB.bottom) / 2;
           const distance = Math.sqrt(dx * dx + dy * dy);
 
           if (distance < minDistance) {
@@ -502,8 +518,10 @@ export function generateDungeon() {
         }
 
         if (closestRoom) {
-          const doorX = Math.floor((room.getRight() + closestRoom.getLeft()) / 2);
-          const doorY = Math.floor((room.getTop() + closestRoom.getBottom()) / 2);
+          const boundsA = roomBounds.get(room.id);
+          const boundsB = roomBounds.get(closestRoom.id);
+          const doorX = Math.floor((boundsA.right + boundsB.left) / 2);
+          const doorY = Math.floor((boundsA.top + boundsB.bottom) / 2);
           if (
             doorX >= secondaryBoundary.minX &&
             doorX <= secondaryBoundary.maxX &&
@@ -595,10 +613,11 @@ export function generateDungeon() {
 
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   validRooms.forEach(room => {
-    minX = Math.min(minX, room.getLeft());
-    maxX = Math.max(maxX, room.getRight());
-    minY = Math.min(minY, room.getTop());
-    maxY = Math.max(maxY, room.getBottom());
+    const bounds = roomBounds.get(room.id);
+    minX = Math.min(minX, bounds.left);
+    maxX = Math.max(maxX, bounds.right);
+    minY = Math.min(minY, bounds.top);
+    maxY = Math.max(maxY, bounds.bottom);
   });
 
   if (minX + offsetX < secondaryBoundary.minX) offsetX = secondaryBoundary.minX - minX;

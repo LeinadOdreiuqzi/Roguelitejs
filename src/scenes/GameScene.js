@@ -1,4 +1,3 @@
-// /src/scenes/GameScene.js
 import Phaser from "phaser";
 import {
   generateDungeon,
@@ -19,96 +18,129 @@ export default class GameScene extends Phaser.Scene {
     this.lightingMode = "perRoom";
     this.torches = null;
     this.torchLights = [];
-    this.hallwayTorchPoints = []; // Potential hallway torch spawn points
-    this.enclosedSpaces = []; // Enclosed spaces that aren't rooms
+    this.hallwayTorchPoints = [];
+    this.enclosedSpaces = [];
     this.spawnMarkerLight = null;
     this.playerLight = null;
     this.visibleLights = new Set();
     this.spawnPoint = null;
-    this.totalTorches = 0; // Track total number of spawned torches
-    this.maxTotalTorches = 25; // Increased maximum total torches
-    this.roomDwellTimes = new Map(); // Track how long the player has been in each room
-    this.spaceDwellTimes = new Map(); // Track how long the player has been in each enclosed space
+    this.totalTorches = 0;
+    this.maxTotalTorches = 25;
+    this.roomDwellTimes = new Map();
+    this.spaceDwellTimes = new Map();
+    this.usePlaceholderSprite = false;
+    this.usePlaceholderAssets = false;
   }
 
   preload() {
+    try {
+      this.load.image("player-front", "/assets/player-front.png");
+      this.load.image("player-back", "/assets/player-back.png");
+    } catch (error) {
+      console.error("Failed to load player sprites:", error);
+      this.usePlaceholderSprite = true;
+    }
+
+    try {
+      this.load.spritesheet("game-assets", "/assets/spritesheet.png", {
+        frameWidth: 16,
+        frameHeight: 16,
+      });
+    } catch (error) {
+      console.error("Failed to load spritesheet:", error);
+      this.usePlaceholderAssets = true;
+    }
+
+    this.load.on('fileerror', (file) => {
+      console.error(`Failed to load file: ${file.key}`, file);
+      if (file.key === "player-front" || file.key === "player-back") {
+        this.usePlaceholderSprite = true;
+      }
+      if (file.key === "game-assets") {
+        this.usePlaceholderAssets = true;
+      }
+    });
+
     this.createPlaceholderGraphics();
   }
 
   createPlaceholderGraphics() {
-    // [Unchanged placeholder graphics generation code]
-    const floorGraphics = this.make.graphics({ x: 0, y: 0, add: false });
-    floorGraphics.fillStyle(0x333333, 1);
-    floorGraphics.fillRect(0, 0, TILE_SIZE, TILE_SIZE / 2);
-    floorGraphics.generateTexture("floor-placeholder", TILE_SIZE, TILE_SIZE / 2);
-    floorGraphics.destroy();
+    if (this.usePlaceholderAssets) {
+      const floorGraphics = this.make.graphics({ x: 0, y: 0, add: false });
+      floorGraphics.fillStyle(0x333333, 1);
+      floorGraphics.fillRect(0, 0, TILE_SIZE, TILE_SIZE / 2);
+      floorGraphics.generateTexture("floor-placeholder", TILE_SIZE, TILE_SIZE / 2);
+      floorGraphics.destroy();
 
-    const wallGraphics = this.make.graphics({ x: 0, y: 0, add: false });
-    wallGraphics.fillStyle(0x888888, 1);
-    wallGraphics.fillRect(0, 0, TILE_SIZE, TILE_SIZE * 1.2);
-    wallGraphics.fillStyle(0x777777, 1);
-    wallGraphics.fillRect(0, 0, TILE_SIZE, TILE_SIZE * 0.3);
-    wallGraphics.fillStyle(0x666666, 1);
-    wallGraphics.fillRect(0, TILE_SIZE * 0.3, TILE_SIZE * 0.2, TILE_SIZE * 0.9);
-    wallGraphics.fillRect(TILE_SIZE * 0.8, TILE_SIZE * 0.3, TILE_SIZE * 0.2, TILE_SIZE * 0.9);
-    wallGraphics.lineStyle(1, 0x555555, 0.5);
-    wallGraphics.strokeRect(0, 0, TILE_SIZE, TILE_SIZE * 1.2);
-    wallGraphics.generateTexture("wall-placeholder", TILE_SIZE, TILE_SIZE * 1.2);
-    wallGraphics.destroy();
+      const wallGraphics = this.make.graphics({ x: 0, y: 0, add: false });
+      wallGraphics.fillStyle(0x888888, 1);
+      wallGraphics.fillRect(0, 0, TILE_SIZE, TILE_SIZE * 1.2);
+      wallGraphics.fillStyle(0x777777, 1);
+      wallGraphics.fillRect(0, 0, TILE_SIZE, TILE_SIZE * 0.3);
+      wallGraphics.fillStyle(0x666666, 1);
+      wallGraphics.fillRect(0, TILE_SIZE * 0.3, TILE_SIZE * 0.2, TILE_SIZE * 0.9);
+      wallGraphics.fillRect(TILE_SIZE * 0.8, TILE_SIZE * 0.3, TILE_SIZE * 0.2, TILE_SIZE * 0.9);
+      wallGraphics.lineStyle(1, 0x555555, 0.5);
+      wallGraphics.strokeRect(0, 0, TILE_SIZE, TILE_SIZE * 1.2);
+      wallGraphics.generateTexture("wall-placeholder", TILE_SIZE, TILE_SIZE * 1.2);
+      wallGraphics.destroy();
 
-    const doorGraphics = this.make.graphics({ x: 0, y: 0, add: false });
-    doorGraphics.fillStyle(0x795548, 1);
-    doorGraphics.fillRect(0, 0, TILE_SIZE * 0.7, TILE_SIZE * 0.8);
-    doorGraphics.fillStyle(0x5d4037, 1);
-    doorGraphics.fillRect(0, 0, TILE_SIZE * 0.7, TILE_SIZE * 0.1);
-    doorGraphics.fillRect(0, 0, TILE_SIZE * 0.1, TILE_SIZE * 0.8);
-    doorGraphics.fillRect(TILE_SIZE * 0.6, 0, TILE_SIZE * 0.1, TILE_SIZE * 0.8);
-    doorGraphics.fillStyle(0xffd700, 1);
-    doorGraphics.fillCircle(TILE_SIZE * 0.55, TILE_SIZE * 0.4, TILE_SIZE * 0.06);
-    doorGraphics.lineStyle(1, 0x3e2723, 0.8);
-    doorGraphics.strokeRect(0, 0, TILE_SIZE * 0.7, TILE_SIZE * 0.8);
-    doorGraphics.generateTexture("door-placeholder", TILE_SIZE * 0.7, TILE_SIZE * 0.8);
-    doorGraphics.destroy();
+      const doorGraphics = this.make.graphics({ x: 0, y: 0, add: false });
+      doorGraphics.fillStyle(0x795548, 1);
+      doorGraphics.fillRect(0, 0, TILE_SIZE * 0.7, TILE_SIZE * 0.8);
+      doorGraphics.fillStyle(0x5d4037, 1);
+      doorGraphics.fillRect(0, 0, TILE_SIZE * 0.7, TILE_SIZE * 0.1);
+      doorGraphics.fillRect(0, 0, TILE_SIZE * 0.1, TILE_SIZE * 0.8);
+      doorGraphics.fillRect(TILE_SIZE * 0.6, 0, TILE_SIZE * 0.1, TILE_SIZE * 0.8);
+      doorGraphics.fillStyle(0xffd700, 1);
+      doorGraphics.fillCircle(TILE_SIZE * 0.55, TILE_SIZE * 0.4, TILE_SIZE * 0.06);
+      doorGraphics.lineStyle(1, 0x3e2723, 0.8);
+      doorGraphics.strokeRect(0, 0, TILE_SIZE * 0.7, TILE_SIZE * 0.8);
+      doorGraphics.generateTexture("door-placeholder", TILE_SIZE * 0.7, TILE_SIZE * 0.8);
+      doorGraphics.destroy();
 
-    const playerGraphics = this.make.graphics({ x: 0, y: 0, add: false });
-    playerGraphics.fillStyle(0x3498db, 1);
-    playerGraphics.fillRoundedRect(4, 10, 16, 16, 4);
-    playerGraphics.fillStyle(0xecf0f1, 1);
-    playerGraphics.fillCircle(12, 8, 6);
-    playerGraphics.fillStyle(0x000000, 1);
-    playerGraphics.fillCircle(10, 7, 1.5);
-    playerGraphics.fillCircle(14, 7, 1.5);
-    playerGraphics.fillStyle(0x3498db, 1);
-    playerGraphics.fillRoundedRect(1, 12, 5, 4, 2);
-    playerGraphics.fillRoundedRect(18, 12, 5, 4, 2);
-    playerGraphics.fillStyle(0x2980b9, 1);
-    playerGraphics.fillRoundedRect(7, 26, 5, 6, 2);
-    playerGraphics.fillRoundedRect(12, 26, 5, 6, 2);
-    playerGraphics.fillStyle(0x7f8c8d, 1);
-    playerGraphics.fillRect(20, 15, 8, 3);
-    playerGraphics.lineStyle(1, 0x2c3e50, 1);
-    playerGraphics.strokeRoundedRect(4, 10, 16, 16, 4);
-    playerGraphics.strokeCircle(12, 8, 6);
-    playerGraphics.strokeRoundedRect(1, 12, 5, 4, 2);
-    playerGraphics.strokeRoundedRect(18, 12, 5, 4, 2);
-    playerGraphics.strokeRoundedRect(7, 26, 5, 6, 2);
-    playerGraphics.strokeRoundedRect(12, 26, 5, 6, 2);
-    playerGraphics.strokeRect(20, 15, 8, 3);
-    playerGraphics.generateTexture("player-placeholder", 28, 32);
-    playerGraphics.destroy();
+      const torchGraphics = this.make.graphics({ x: 0, y: 0, add: false });
+      torchGraphics.fillStyle(0x8b4513, 1);
+      torchGraphics.fillRect(12, 8, 4, 16);
+      torchGraphics.fillStyle(0xff4500, 1);
+      torchGraphics.fillTriangle(10, 8, 18, 8, 14, 0);
+      torchGraphics.fillStyle(0xffff00, 1);
+      torchGraphics.fillTriangle(12, 6, 16, 6, 14, 2);
+      torchGraphics.lineStyle(1, 0x000000, 1);
+      torchGraphics.strokeRect(12, 8, 4, 16);
+      torchGraphics.strokeTriangle(10, 8, 18, 8, 14, 0);
+      torchGraphics.generateTexture("torch-placeholder", 28, 24);
+      torchGraphics.destroy();
+    }
 
-    const torchGraphics = this.make.graphics({ x: 0, y: 0, add: false });
-    torchGraphics.fillStyle(0x8b4513, 1);
-    torchGraphics.fillRect(12, 8, 4, 16);
-    torchGraphics.fillStyle(0xff4500, 1);
-    torchGraphics.fillTriangle(10, 8, 18, 8, 14, 0);
-    torchGraphics.fillStyle(0xffff00, 1);
-    torchGraphics.fillTriangle(12, 6, 16, 6, 14, 2);
-    torchGraphics.lineStyle(1, 0x000000, 1);
-    torchGraphics.strokeRect(12, 8, 4, 16);
-    torchGraphics.strokeTriangle(10, 8, 18, 8, 14, 0);
-    torchGraphics.generateTexture("torch-placeholder", 28, 24);
-    torchGraphics.destroy();
+    if (this.usePlaceholderSprite) {
+      const playerGraphics = this.make.graphics({ x: 0, y: 0, add: false });
+      playerGraphics.fillStyle(0x3498db, 1);
+      playerGraphics.fillRoundedRect(4, 10, 16, 16, 4);
+      playerGraphics.fillStyle(0xecf0f1, 1);
+      playerGraphics.fillCircle(12, 8, 6);
+      playerGraphics.fillStyle(0x000000, 1);
+      playerGraphics.fillCircle(10, 7, 1.5);
+      playerGraphics.fillCircle(14, 7, 1.5);
+      playerGraphics.fillStyle(0x3498db, 1);
+      playerGraphics.fillRoundedRect(1, 12, 5, 4, 2);
+      playerGraphics.fillRoundedRect(18, 12, 5, 4, 2);
+      playerGraphics.fillStyle(0x2980b9, 1);
+      playerGraphics.fillRoundedRect(7, 26, 5, 6, 2);
+      playerGraphics.fillRoundedRect(12, 26, 5, 6, 2);
+      playerGraphics.fillStyle(0x7f8c8d, 1);
+      playerGraphics.fillRect(20, 15, 8, 3);
+      playerGraphics.lineStyle(1, 0x2c3e50, 1);
+      playerGraphics.strokeRoundedRect(4, 10, 16, 16, 4);
+      playerGraphics.strokeCircle(12, 8, 6);
+      playerGraphics.strokeRoundedRect(1, 12, 5, 4, 2);
+      playerGraphics.strokeRoundedRect(18, 12, 5, 4, 2);
+      playerGraphics.strokeRoundedRect(7, 26, 5, 6, 2);
+      playerGraphics.strokeRoundedRect(12, 26, 5, 6, 2);
+      playerGraphics.strokeRect(20, 15, 8, 3);
+      playerGraphics.generateTexture("player-placeholder", 28, 32);
+      playerGraphics.destroy();
+    }
   }
 
   create() {
@@ -136,7 +168,7 @@ export default class GameScene extends Phaser.Scene {
 
     this.currentRoom = rooms[0];
     this.rooms.forEach(room => {
-      room.hasTorch = false; // Initialize hasTorch state for each room
+      room.hasTorch = false;
     });
 
     this.renderRoom(this.currentRoom);
@@ -147,7 +179,7 @@ export default class GameScene extends Phaser.Scene {
         const posX = (door.x - door.y) * TILE_SIZE;
         const posY = (door.x + door.y) * (TILE_SIZE / 2);
         const doorSprite = this.doorTiles
-          .create(posX, posY, "door-placeholder")
+          .create(posX, posY, this.usePlaceholderAssets ? "door-placeholder" : "game-assets", 272)
           .setDisplaySize(TILE_SIZE / 2, TILE_SIZE / 2)
           .setOrigin(0.5, 1)
           .setDepth(posY);
@@ -161,8 +193,9 @@ export default class GameScene extends Phaser.Scene {
     const playerY = (spawnPoint.x + spawnPoint.y) * (TILE_SIZE / 2);
     this.spawnPoint = { x: playerX, y: playerY };
 
+    const initialSprite = this.usePlaceholderSprite ? "player-placeholder" : "player-front";
     this.player = this.physics.add
-      .sprite(playerX, playerY - 10, "player-placeholder")
+      .sprite(playerX, playerY - 10, initialSprite)
       .setOrigin(0.5, 0.8);
     this.player.body.setCollideWorldBounds(false);
     this.player.body.setSize(16, 12).setOffset(6, 16);
@@ -173,9 +206,7 @@ export default class GameScene extends Phaser.Scene {
     this.playerLight = this.lights.addLight(playerX, playerY, 50, 0xffff99, 0.9);
     this.spawnMarkerLight = this.lights.addLight(playerX, playerY, 100, 0xffffff, 0.8);
 
-    // Precompute hallway torch spawn points
     this.setupHallwayTorchPoints();
-    // Identify enclosed spaces
     this.identifyEnclosedSpaces();
 
     this.playerShadow = this.add
@@ -209,10 +240,9 @@ export default class GameScene extends Phaser.Scene {
   }
 
   setupHallwayTorchPoints() {
-    const hallwayTorchChance = 0.8; // Increased to 80%
+    const hallwayTorchChance = 0.8;
     let hallwayTorchesPlaced = 0;
-    const maxHallwayTorches = 10; // Increased to 10
-    const margin = Math.max(ROOM_WIDTH, ROOM_HEIGHT) + 8;
+    const maxHallwayTorches = 10;
     const left = 0;
     const right = MAP_WIDTH - 1;
     const top = 0;
@@ -254,13 +284,12 @@ export default class GameScene extends Phaser.Scene {
 
   identifyEnclosedSpaces() {
     const visited = Array(MAP_HEIGHT).fill().map(() => Array(MAP_WIDTH).fill(false));
-    const minSpaceSize = 10; // Minimum number of tiles to consider an enclosed space a "large space"
+    const minSpaceSize = 10;
 
     for (let y = 0; y < MAP_HEIGHT; y++) {
       for (let x = 0; x < MAP_WIDTH; x++) {
         if (visited[y][x] || !this.dungeon[y] || this.dungeon[y][x] !== 0) continue;
 
-        // Check if this tile is in a room
         let isInRoom = false;
         for (const room of this.rooms) {
           if (
@@ -278,7 +307,6 @@ export default class GameScene extends Phaser.Scene {
           continue;
         }
 
-        // Perform flood-fill to find the enclosed space
         const spaceTiles = [];
         const queue = [{ x, y }];
         visited[y][x] = true;
@@ -287,7 +315,6 @@ export default class GameScene extends Phaser.Scene {
           const { x: cx, y: cy } = queue.shift();
           spaceTiles.push({ x: cx, y: cy });
 
-          // Check neighboring tiles
           for (let dy = -1; dy <= 1; dy++) {
             for (let dx = -1; dx <= 1; dx++) {
               if (dx === 0 && dy === 0) continue;
@@ -324,7 +351,6 @@ export default class GameScene extends Phaser.Scene {
           }
         }
 
-        // If the space is large enough, treat it as a pseudo-room
         if (spaceTiles.length >= minSpaceSize) {
           let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
           spaceTiles.forEach(tile => {
@@ -340,20 +366,19 @@ export default class GameScene extends Phaser.Scene {
             maxY,
             tiles: spaceTiles,
             hasTorch: false,
-            visited: false, // Keep visited property for potential future use
+            visited: false,
             centerX: (minX + maxX) / 2,
             centerY: (minY + maxY) / 2,
-            tileCount: spaceTiles.length, // Store tile count for spawn logic
+            tileCount: spaceTiles.length,
           });
-          console.log(`Enclosed space identified: ${spaceTiles.length} tiles, bounds (${minX}, ${minY}) to (${maxX}, ${maxY})`);
         }
       }
     }
   }
 
   spawnTorch(posX, posY, radius, intensity) {
-    if (this.totalTorches >= this.maxTotalTorches) return null; // Prevent spawning if limit reached
-    const torch = this.torches.create(posX, posY - 10, "torch-placeholder")
+    if (this.totalTorches >= this.maxTotalTorches) return null;
+    const torch = this.torches.create(posX, posY - 10, this.usePlaceholderAssets ? "torch-placeholder" : "game-assets", 920)
       .setDisplaySize(16, 24)
       .setOrigin(0.5, 1)
       .setDepth(posY);
@@ -366,21 +391,19 @@ export default class GameScene extends Phaser.Scene {
   }
 
   updateTorches(delta) {
-    const roomTorchChance = 0.95; // Increased to 95%
-    const enclosedSpaceTorchChance = 0.9; // Increased to 90%
-    const largeSpaceThreshold = 100; // Tile count threshold for guaranteed torch in large spaces
-    const spawnCullDistance = 2000; // Culling distance for spawning (pixels)
-    const intensityCullDistance = 1000; // Distance for intensity culling (pixels)
-    const dwellTimeThreshold = 2000; // 2 seconds (in milliseconds) before forcing a torch spawn
-    const deltaSeconds = delta / 1000; // Convert delta from milliseconds to seconds
+    const roomTorchChance = 0.95;
+    const enclosedSpaceTorchChance = 0.9;
+    const largeSpaceThreshold = 100;
+    const spawnCullDistance = 2000;
+    const intensityCullDistance = 1000;
+    const dwellTimeThreshold = 2000;
 
-    // Update room torches
     const playerTilePos = this.getPlayerTilePosition();
     const worldX = playerTilePos.x;
     const worldY = playerTilePos.y;
 
-    this.rooms.forEach((room) => {
-      // Calculate distance to room center
+    // Optimize by precomputing rooms within spawn distance
+    const nearbyRooms = this.rooms.filter(room => {
       const roomCenterX = (room.getLeft() + room.getRight()) / 2;
       const roomCenterY = (room.getTop() + room.getBottom()) / 2;
       const roomCenterPosX = (roomCenterX - roomCenterY) * TILE_SIZE;
@@ -391,179 +414,100 @@ export default class GameScene extends Phaser.Scene {
         roomCenterPosX,
         roomCenterPosY
       );
+      return distance <= spawnCullDistance;
+    });
 
-      if (distance > spawnCullDistance) {
-        this.roomDwellTimes.delete(room.id); // Reset dwell time if out of range
-        return; // Skip if too far
-      }
-
-      // Check if the player is within the room's bounds (expanded by a buffer)
-      const buffer = 2; // Buffer of 2 tiles in each direction
+    nearbyRooms.forEach((room) => {
+      const roomCenterX = (room.getLeft() + room.getRight()) / 2;
+      const roomCenterY = (room.getTop() + room.getBottom()) / 2;
+      const roomCenterPosX = (roomCenterX - roomCenterY) * TILE_SIZE;
+      const roomCenterPosY = (roomCenterX + roomCenterY) * (TILE_SIZE / 2);
       const isInRoomBounds =
-        worldX >= room.getLeft() - buffer &&
-        worldX <= room.getRight() + buffer &&
-        worldY >= room.getTop() - buffer &&
-        worldY <= room.getBottom() + buffer;
+        worldX >= room.getLeft() - 2 &&
+        worldX <= room.getRight() + 2 &&
+        worldY >= room.getTop() - 2 &&
+        worldY <= room.getBottom() + 2;
 
-      // If the player is in the room bounds, mark it as visited
       if (isInRoomBounds && !room.visited) {
         room.visited = true;
-        console.log(`Room ${room.id} marked as visited`);
       }
 
-      // If the player is in the room bounds, track dwell time
-      if (isInRoomBounds) {
-        const currentDwellTime = (this.roomDwellTimes.get(room.id) || 0) + delta;
-        this.roomDwellTimes.set(room.id, currentDwellTime);
-
-        // If the room doesn't have a torch, try to spawn one
-        if (!room.hasTorch) {
-          console.log(`Player entered room ${room.id}, distance: ${distance.toFixed(2)}`);
-          room.hasTorch = true;
-          if (Math.random() < roomTorchChance) {
-            const floorTiles = [];
-            for (let y = room.getTop(); y <= room.getBottom(); y++) {
-              for (let x = room.getLeft(); x <= room.getRight(); x++) {
-                if (this.dungeon[y] && this.dungeon[y][x] === 0) {
-                  const posX = (x - y) * TILE_SIZE;
-                  const posY = (x + y) * (TILE_SIZE / 2);
-                  floorTiles.push({ x: posX, y: posY });
-                }
-              }
-            }
-            if (floorTiles.length > 0) {
-              const pos = floorTiles[Math.floor(Math.random() * floorTiles.length)];
-              this.spawnTorch(pos.x, pos.y, 150, 1.5);
-              console.log(`Torch spawned in room ${room.id} at (${pos.x}, ${pos.y - 10})`);
-              this.roomDwellTimes.delete(room.id); // Reset dwell time after spawning
-            }
-          } else {
-            console.log(`No torch spawned in room ${room.id} (chance failed)`);
-            // Fallback: Force spawn after dwelling for 2 seconds
-            if (currentDwellTime >= dwellTimeThreshold) {
-              const floorTiles = [];
-              for (let y = room.getTop(); y <= room.getBottom(); y++) {
-                for (let x = room.getLeft(); x <= room.getRight(); x++) {
-                  if (this.dungeon[y] && this.dungeon[y][x] === 0) {
-                    const posX = (x - y) * TILE_SIZE;
-                    const posY = (x + y) * (TILE_SIZE / 2);
-                    floorTiles.push({ x: posX, y: posY });
-                  }
-                }
-              }
-              if (floorTiles.length > 0) {
-                const pos = floorTiles[Math.floor(Math.random() * floorTiles.length)];
-                this.spawnTorch(pos.x, pos.y, 150, 1.5);
-                console.log(`Forced torch spawn in room ${room.id} at (${pos.x}, ${pos.y - 10}) after dwelling`);
-                this.roomDwellTimes.delete(room.id); // Reset dwell time after spawning
+      if (isInRoomBounds && !room.hasTorch) {
+        room.hasTorch = true;
+        if (Math.random() < roomTorchChance) {
+          let floorTiles = [];
+          for (let y = room.getTop(); y <= room.getBottom(); y++) {
+            for (let x = room.getLeft(); x <= room.getRight(); x++) {
+              if (this.dungeon[y]?.[x] === 0) {
+                const posX = (x - y) * TILE_SIZE;
+                const posY = (x + y) * (TILE_SIZE / 2);
+                floorTiles.push({ x: posX, y: posY });
               }
             }
           }
+          if (floorTiles.length > 0) {
+            const pos = floorTiles[Math.floor(Math.random() * floorTiles.length)];
+            this.spawnTorch(pos.x, pos.y, 150, 1.5);
+          }
         }
-      } else {
-        this.roomDwellTimes.delete(room.id); // Reset dwell time if player leaves the room
       }
     });
 
-    // Update enclosed space torches
-    this.enclosedSpaces.forEach((space, index) => {
-      // Calculate distance to space center
+    // Optimize enclosed spaces check
+    const nearbySpaces = this.enclosedSpaces.filter((space) => {
       const spaceCenterPosX = (space.centerX - space.centerY) * TILE_SIZE;
       const spaceCenterPosY = (space.centerX + space.centerY) * (TILE_SIZE / 2);
-      const distance = Phaser.Math.Distance.Between(
+      return Phaser.Math.Distance.Between(
         this.player.x,
         this.player.y,
         spaceCenterPosX,
         spaceCenterPosY
-      );
+      ) <= spawnCullDistance;
+    });
 
-      if (distance > spawnCullDistance) {
-        this.spaceDwellTimes.delete(index); // Reset dwell time if out of range
-        return; // Skip if too far
-      }
-
+    nearbySpaces.forEach((space, index) => {
       const isInSpaceBounds =
         worldX >= space.minX - 2 &&
         worldX <= space.maxX + 2 &&
         worldY >= space.minY - 2 &&
         worldY <= space.maxY + 2;
 
-      // If the player is in the space bounds, mark it as visited
       if (isInSpaceBounds && !space.visited) {
         space.visited = true;
-        console.log(`Enclosed space ${index} marked as visited`);
       }
 
-      // If the player is in the space bounds, track dwell time
-      if (isInSpaceBounds) {
-        const currentDwellTime = (this.spaceDwellTimes.get(index) || 0) + delta;
-        this.spaceDwellTimes.set(index, currentDwellTime);
-
-        if (!space.hasTorch) {
-          console.log(`Player entered enclosed space ${index}, distance: ${distance.toFixed(2)}, tiles: ${space.tileCount}`);
-          space.hasTorch = true;
-          // Guarantee a torch for large spaces (>100 tiles), otherwise use the spawn chance
-          const spawnChance = space.tileCount > largeSpaceThreshold ? 1.0 : enclosedSpaceTorchChance;
-          if (Math.random() < spawnChance) {
-            const pos = space.tiles[Math.floor(Math.random() * space.tiles.length)];
-            const posX = (pos.x - pos.y) * TILE_SIZE;
-            const posY = (pos.x + pos.y) * (TILE_SIZE / 2);
-            this.spawnTorch(posX, posY, 150, 1.5);
-            console.log(`Torch spawned in enclosed space ${index} at (${posX}, ${posY - 10})`);
-            this.spaceDwellTimes.delete(index); // Reset dwell time after spawning
-          } else {
-            console.log(`No torch spawned in enclosed space ${index} (chance failed)`);
-            // Fallback: Force spawn after dwelling for 2 seconds
-            if (currentDwellTime >= dwellTimeThreshold) {
-              const pos = space.tiles[Math.floor(Math.random() * space.tiles.length)];
-              const posX = (pos.x - pos.y) * TILE_SIZE;
-              const posY = (pos.x + pos.y) * (TILE_SIZE / 2);
-              this.spawnTorch(posX, posY, 150, 1.5);
-              console.log(`Forced torch spawn in enclosed space ${index} at (${posX}, ${posY - 10}) after dwelling`);
-              this.spaceDwellTimes.delete(index); // Reset dwell time after spawning
-            }
-          }
+      if (isInSpaceBounds && !space.hasTorch) {
+        space.hasTorch = true;
+        const spawnChance = space.tileCount > largeSpaceThreshold ? 1.0 : enclosedSpaceTorchChance;
+        if (Math.random() < spawnChance) {
+          const pos = space.tiles[Math.floor(Math.random() * space.tiles.length)];
+          const posX = (pos.x - pos.y) * TILE_SIZE;
+          const posY = (pos.x + pos.y) * (TILE_SIZE / 2);
+          this.spawnTorch(posX, posY, 150, 1.5);
         }
-      } else {
-        this.spaceDwellTimes.delete(index); // Reset dwell time if player leaves the space
       }
     });
 
-    // Update hallway torches
+    // Optimize hallway torch points check
     this.hallwayTorchPoints.forEach((point, index) => {
-      if (point.hasTorch) return; // Skip if a torch has already been spawned here
-
-      const distance = Phaser.Math.Distance.Between(
-        this.player.x,
-        this.player.y,
-        point.x,
-        point.y
-      );
-      if (distance > spawnCullDistance) return; // Skip if too far
-
-      const threshold = 400; // Spawn if player is within 400 pixels
-
-      if (distance < threshold) {
+      if (point.hasTorch) return;
+      const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, point.x, point.y);
+      if (distance > spawnCullDistance) return;
+      if (distance < 400) {
         point.hasTorch = true;
         this.spawnTorch(point.x, point.y, 200, 1.8);
-        console.log(`Hallway torch ${index} spawned at (${point.x}, ${point.y - 10})`);
       }
     });
 
-    // Update torch light intensities based on distance
+    // Optimize light intensity updates
     this.torchLights.forEach(light => {
-      const distance = Phaser.Math.Distance.Between(
-        this.player.x,
-        this.player.y,
-        light.x,
-        light.y
-      );
-      if (distance > intensityCullDistance) {
-        light.setIntensity(0); // Disable distant lights
-      } else {
-        light.setIntensity(light.radius === 150 ? 1.5 : 1.8); // Restore intensity
-      }
+      const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, light.x, light.y);
+      light.setIntensity(distance > intensityCullDistance ? 0 : (light.radius === 150 ? 1.5 : 1.8));
     });
+
+    // Clear dwell times to prevent memory buildup
+    this.roomDwellTimes.clear();
+    this.spaceDwellTimes.clear();
   }
 
   renderRoom(room) {
@@ -585,7 +529,6 @@ export default class GameScene extends Phaser.Scene {
     this.torchLights = [];
     this.visibleLights.clear();
 
-    const margin = Math.max(ROOM_WIDTH, ROOM_HEIGHT) + 8;
     const left = 0;
     const right = MAP_WIDTH - 1;
     const top = 0;
@@ -596,8 +539,8 @@ export default class GameScene extends Phaser.Scene {
         const posX = (x - y) * TILE_SIZE;
         const posY = (x + y) * (TILE_SIZE / 2);
 
-        if (this.dungeon[y] && this.dungeon[y][x] === 0) {
-          const floorTile = this.add.sprite(posX, posY, "floor-placeholder")
+        if (this.dungeon[y]?.[x] === 0) {
+          const floorTile = this.add.sprite(posX, posY, this.usePlaceholderAssets ? "floor-placeholder" : "game-assets", 11)
             .setDisplaySize(TILE_SIZE, TILE_SIZE / 2)
             .setOrigin(0.5, 1)
             .setDepth(posY);
@@ -607,13 +550,12 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    // Re-spawn torches for rooms that already have them
     this.rooms.forEach((r) => {
       if (r.hasTorch) {
-        const floorTiles = [];
+        let floorTiles = [];
         for (let y = r.getTop(); y <= r.getBottom(); y++) {
           for (let x = r.getLeft(); x <= r.getRight(); x++) {
-            if (this.dungeon[y] && this.dungeon[y][x] === 0) {
+            if (this.dungeon[y]?.[x] === 0) {
               const posX = (x - y) * TILE_SIZE;
               const posY = (x + y) * (TILE_SIZE / 2);
               floorTiles.push({ x: posX, y: posY });
@@ -627,7 +569,6 @@ export default class GameScene extends Phaser.Scene {
       }
     });
 
-    // Re-spawn torches for enclosed spaces that already have them
     this.enclosedSpaces.forEach((space) => {
       if (space.hasTorch) {
         const pos = space.tiles[Math.floor(Math.random() * space.tiles.length)];
@@ -637,7 +578,6 @@ export default class GameScene extends Phaser.Scene {
       }
     });
 
-    // Re-spawn hallway torches that have been activated
     this.hallwayTorchPoints.forEach((point) => {
       if (point.hasTorch) {
         this.spawnTorch(point.x, point.y, 200, 1.8);
@@ -646,7 +586,7 @@ export default class GameScene extends Phaser.Scene {
 
     for (let y = top; y <= bottom; y++) {
       for (let x = left; x <= right; x++) {
-        if (this.dungeon[y] && this.dungeon[y][x] === 1) {
+        if (this.dungeon[y]?.[x] === 1) {
           let adjacentToFloor = false;
           for (let dy = -1; dy <= 1; dy++) {
             for (let dx = -1; dx <= 1; dx++) {
@@ -658,8 +598,7 @@ export default class GameScene extends Phaser.Scene {
                 nx < MAP_WIDTH &&
                 ny >= 0 &&
                 ny < MAP_HEIGHT &&
-                this.dungeon[ny] &&
-                this.dungeon[ny][nx] === 0
+                this.dungeon[ny]?.[nx] === 0
               ) {
                 adjacentToFloor = true;
                 break;
@@ -671,7 +610,7 @@ export default class GameScene extends Phaser.Scene {
           if (adjacentToFloor) {
             const posX = (x - y) * TILE_SIZE;
             const posY = (x + y) * (TILE_SIZE / 2);
-            const wall = this.wallTiles.create(posX, posY - TILE_SIZE * 0.6, "wall-placeholder")
+            const wall = this.wallTiles.create(posX, posY - TILE_SIZE * 0.6, this.usePlaceholderAssets ? "wall-placeholder" : "game-assets", 168)
               .setDisplaySize(TILE_SIZE, TILE_SIZE * 1.2)
               .setOrigin(0.5, 1)
               .setDepth(posY + 1);
@@ -718,7 +657,6 @@ export default class GameScene extends Phaser.Scene {
     const nextRoom = this.rooms[nextRoomId];
 
     if (nextRoom !== this.currentRoom) {
-      console.log(`Transitioning from room ${this.currentRoom.id} to room ${nextRoom.id}`);
       this.currentRoom = this.rooms[nextRoomId];
 
       const roomCenterX = (nextRoom.getLeft() + nextRoom.getRight()) / 2;
@@ -748,7 +686,7 @@ export default class GameScene extends Phaser.Scene {
           nx < MAP_WIDTH &&
           ny >= 0 &&
           ny < MAP_HEIGHT &&
-          this.dungeon[ny][nx] === 1 &&
+          this.dungeon[ny]?.[nx] === 1 &&
           nx !== canvasBoundary.minX &&
           nx !== canvasBoundary.maxX &&
           ny !== canvasBoundary.minY &&
@@ -772,7 +710,7 @@ export default class GameScene extends Phaser.Scene {
               tileX < MAP_WIDTH &&
               tileY >= 0 &&
               tileY < MAP_HEIGHT &&
-              this.dungeon[tileY][tileX] === 0
+              this.dungeon[tileY]?.[tileX] === 0
             ) {
               const isoX = (tileX - tileY) * TILE_SIZE;
               const isoY = (tileX + tileY) * (TILE_SIZE / 2);
@@ -835,6 +773,14 @@ export default class GameScene extends Phaser.Scene {
     const isoVelocityY = (velocityX + velocityY) * 0.6;
     this.player.body.setVelocity(isoVelocityX, isoVelocityY);
 
+    if (!this.usePlaceholderSprite) {
+      if (velocityY > 0) {
+        this.player.setTexture("player-front");
+      } else if (velocityY < 0) {
+        this.player.setTexture("player-back");
+      }
+    }
+
     if (this.spawnMarkerLight) {
       this.spawnMarkerLight.setPosition(this.player.x, this.player.y);
     }
@@ -843,7 +789,6 @@ export default class GameScene extends Phaser.Scene {
       this.playerLight.setPosition(this.player.x, this.player.y);
     }
 
-    // Update torches based on proximity
     this.updateTorches(delta);
 
     if (!this.noclipMode && this.player.body.blocked.none && this.player.body.velocity.lengthSq() < 10) {
@@ -893,7 +838,7 @@ export default class GameScene extends Phaser.Scene {
         },
       });
 
-      const particles = this.add.particles(this.player.x, this.player.y, "floor-placeholder", {
+      const particles = this.add.particles(this.player.x, this.player.y, this.usePlaceholderAssets ? "floor-placeholder" : "game-assets", 916, {
         speed: 50,
         scale: { start: 0.2, end: 0 },
         alpha: { start: 0.5, end: 0 },
