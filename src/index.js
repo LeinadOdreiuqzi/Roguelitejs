@@ -1,20 +1,50 @@
 import Phaser from "phaser";
-import GameScene from "./scenes/GameScene.js";
+import MenuScene from "./scenes/MenuScene";
+import GameScene from "./scenes/GameScene";
+import HUDScene from "./scenes/HUDScene";
+import GameOverScene from "./scenes/GameOverScene"; // New scene
 
 const config = {
-  type: Phaser.AUTO,
+  type: Phaser.WEBGL,
   width: window.innerWidth,
   height: window.innerHeight,
   parent: "game-container",
-  pixelArt: true,
   physics: {
     default: "arcade",
     arcade: {
-      gravity: { y: 0 },
       debug: false,
     },
   },
-  scene: [GameScene], // Removed LightingMap
+  scene: [MenuScene, GameScene, HUDScene, GameOverScene], // Added GameOverScene
+  backgroundColor: "#000000",
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+    width: window.innerWidth,
+    height: window.innerHeight,
+  },
+  callbacks: {
+    postBoot: () => {
+      window.addEventListener("resize", () => {
+        config.width = window.innerWidth;
+        config.height = window.innerHeight;
+        game.scale.resize(window.innerWidth, window.innerHeight);
+        game.canvas.setAttribute("width", window.innerWidth);
+        game.canvas.setAttribute("height", window.innerHeight);
+      });
+    },
+  },
 };
 
 const game = new Phaser.Game(config);
+
+game.events.on("ready", () => {
+  console.log("Renderer:", game.renderer);
+  console.log("Pipelines:", game.renderer.pipelines);
+  if (game.renderer && game.renderer.pipelines) {
+    const light2DPipeline = game.renderer.pipelines.get('Light2D');
+    console.log("Light2D Pipeline Available:", !!light2DPipeline);
+  } else {
+    console.warn("Pipelines or renderer not properly initialized.");
+  }
+});

@@ -1,8 +1,10 @@
-// /src/systems/procedural/DungeonGenerator.js
 import * as ROT from "rot-js";
 import { MAP_WIDTH, MAP_HEIGHT } from "../../utils/Constants.js";
 
-export function generateDungeon() {
+export function generateDungeon(seed) {
+  // --- Seed and RNG Setup ---
+  // Set seed for deterministic generation if provided
+  if (seed) ROT.RNG.setSeed(parseInt(seed));
   const map = new ROT.Map.Digger(MAP_WIDTH, MAP_HEIGHT, {
     roomWidth: [8, 15],
     roomHeight: [6, 12],
@@ -16,12 +18,15 @@ export function generateDungeon() {
     .map(() => Array(MAP_WIDTH).fill(1));
   const doors = [];
   const corridorPaths = new Map();
+  const items = []; // Placeholder for items
+  const enemies = []; // Placeholder for enemies
 
   map.create((x, y, value) => {
     dungeon[y][x] = value;
     if (value === 0) corridorPaths.set(`${x},${y}`, []);
   });
 
+  // --- Room Processing Section ---
   const rooms = map.getRooms();
   const validRooms = [];
   const disconnectedRooms = [];
@@ -155,7 +160,7 @@ export function generateDungeon() {
     }
   });
 
-  // Rest of the function remains largely the same, but we'll adjust the centering logic later
+  // --- Quadrant and Room Adjustment Section ---
   const minRoomsPerQuadrant = 1;
   quadrants.forEach((quadrant) => {
     while (quadrant.rooms < minRoomsPerQuadrant && validRooms.length < 15) {
@@ -191,8 +196,7 @@ export function generateDungeon() {
         getTop: function () { return this.y1; },
         getBottom: function () { return this.y2; },
         getDoors: function (callback) {
-          const doorPositions = getDoorPositions(this);
-          doorPositions.forEach((pos) => {
+          getDoorPositions(this).forEach((pos) => {
             if (
               pos.x >= secondaryBoundary.minX &&
               pos.x <= secondaryBoundary.maxX &&
@@ -244,7 +248,6 @@ export function generateDungeon() {
             dungeon[y][x] = 1;
           }
         }
-
         for (let y = newRoom.y1; y <= newRoom.y2; y++) {
           for (let x = newRoom.x1; x <= newRoom.x2; x++) {
             dungeon[y][x] = 0;
@@ -254,7 +257,28 @@ export function generateDungeon() {
     }
   });
 
-  // Rest of the function (fillEmptySpaces, cleanupWalls, ensureAccessibility, etc.) remains unchanged
+  // --- Population Section ---
+  // Populate rooms with placeholder enemies
+  validRooms.forEach(room => {
+    const enemyCount = Phaser.Math.Between(1, 3); // Random number of enemies (1-3) per room
+    for (let i = 0; i < enemyCount; i++) {
+      const x = Phaser.Math.Between(room.x1 + 1, room.x2 - 1);
+      const y = Phaser.Math.Between(room.y1 + 1, room.y2 - 1);
+      if (dungeon[y][x] === 0) {
+        enemies.push({ x, y, type: "placeholder", health: 10 }); // Placeholder enemy type
+      }
+    }
+
+    if (Math.random() < 0.5) {
+      const x = Phaser.Math.Between(room.x1 + 1, room.x2 - 1);
+      const y = Phaser.Math.Between(room.y1 + 1, room.y2 - 1);
+      if (dungeon[y][x] === 0) {
+        items.push({ x, y, type: "healthPotion" }); // Placeholder item
+      }
+    }
+  });
+
+  // --- Corridor and Loop Handling Section ---
   const visited = new Set();
   const parentMap = new Map();
   let loopCount = 0;
@@ -312,6 +336,7 @@ export function generateDungeon() {
     }
   });
 
+  // --- Space Filling Section ---
   const fillEmptySpaces = () => {
     const visitedTiles = new Set();
     const roomTilesSet = new Set();
@@ -385,6 +410,7 @@ export function generateDungeon() {
 
   fillEmptySpaces();
 
+  // --- Wall Cleanup Section ---
   const cleanupWalls = () => {
     const directions = [
       { dx: 0, dy: -1 },
@@ -474,6 +500,7 @@ export function generateDungeon() {
 
   cleanupWalls();
 
+  // --- Accessibility Section ---
   const ensureAccessibility = () => {
     validRooms.forEach((room, index) => {
       if (room.doors.length === 0) {
@@ -519,6 +546,7 @@ export function generateDungeon() {
 
   ensureAccessibility();
 
+  // --- Connection and Centering Section ---
   const roomConnections = new Map();
   const seenDoors = new Set();
   validRooms.forEach((room, index) => {
@@ -534,9 +562,7 @@ export function generateDungeon() {
             const otherRoom = validRooms[otherIndex];
             let connects = false;
             otherRoom.doors.forEach((otherDoor) => {
-              if (otherDoor.x === door.x && otherDoor.y === door.y) {
-                connects = true;
-              }
+              if (otherDoor.x === door.x && otherDoor.y === door.y) connects = true;
             });
             if (connects) {
               const connectionKey = `${Math.min(index, otherIndex)}-${Math.max(index, otherIndex)}`;
@@ -564,9 +590,7 @@ export function generateDungeon() {
     const connectedRooms = [];
     validRooms.forEach((room) => {
       room.doors.forEach((d) => {
-        if (d.x === door.x && d.y === door.y) {
-          connectedRooms.push(room.id);
-        }
+        if (d.x === door.x && d.y === door.y) connectedRooms.push(room.id);
       });
     });
 
@@ -673,7 +697,7 @@ export function generateDungeon() {
     validRooms[0].visited = true;
   }
 
-  return { dungeon: newDungeon, rooms: validRooms, doors: newDoors, disconnectedRooms };
+  return { dungeon: newDungeon, rooms: validRooms, doors: newDoors, disconnectedRooms, items, enemies };
 }
 
 function splitRoom(room, dungeon, maxWidth, maxHeight) {
@@ -757,7 +781,7 @@ export function findBestSpawnPoint(dungeon, room) {
     return center;
   }
 
-  const searchRadius = Math.min(room.width || (room.x2 - room.x1 + 1), room.height || (room.y2 - room.y1 + 1)) / 2;
+  const searchRadius = Math.min(room.getRight() - room.getLeft() + 1, room.getBottom() - room.getTop() + 1) / 2;
   for (let radius = 1; radius <= searchRadius; radius++) {
     for (let dx = -radius; dx <= radius; dx++) {
       for (let dy = -radius; dy <= radius; dy++) {
