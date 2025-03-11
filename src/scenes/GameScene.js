@@ -66,12 +66,16 @@ export default class GameScene extends Phaser.Scene {
 
   createPlaceholderGraphics() {
     if (this.usePlaceholderAssets) {
+      // Adjusted floor placeholder to match wall base for seamless alignment
       const floorGraphics = this.make.graphics({ x: 0, y: 0, add: false });
       floorGraphics.fillStyle(0x333333, 1);
       floorGraphics.fillRect(0, 0, TILE_SIZE, TILE_SIZE / 2);
+      floorGraphics.lineStyle(1, 0x222222, 1); // Add a subtle border for better contrast
+      floorGraphics.strokeRect(0, 0, TILE_SIZE, TILE_SIZE / 2);
       floorGraphics.generateTexture("floor-placeholder", TILE_SIZE, TILE_SIZE / 2);
       floorGraphics.destroy();
 
+      // Adjusted wall placeholder to align with floor
       const wallGraphics = this.make.graphics({ x: 0, y: 0, add: false });
       wallGraphics.fillStyle(0x888888, 1);
       wallGraphics.fillRect(0, 0, TILE_SIZE, TILE_SIZE * 1.2);
@@ -169,6 +173,7 @@ export default class GameScene extends Phaser.Scene {
     this.currentRoom = rooms[0];
     this.rooms.forEach(room => {
       room.hasTorch = false;
+      room.visited = false;
     });
 
     this.renderRoom(this.currentRoom);
@@ -229,7 +234,7 @@ export default class GameScene extends Phaser.Scene {
     this.physics.add.overlap(this.player, this.doorTiles, this.handleDoorTransition, null, this);
 
     this.add
-      .text(10, 36, "Version 1.3: Room Lighting & Torches", {
+      .text(10, 36, "Version 1.5: Large Rooms & Markers", {
         fontSize: "14px",
         color: "#ffffff",
         stroke: "#000000",
@@ -430,6 +435,8 @@ export default class GameScene extends Phaser.Scene {
 
       if (isInRoomBounds && !room.visited) {
         room.visited = true;
+        this.currentRoom = room;
+        console.log(`Entered room ${room.id}`);
       }
 
       if (isInRoomBounds && !room.hasTorch) {
@@ -534,6 +541,7 @@ export default class GameScene extends Phaser.Scene {
     const top = 0;
     const bottom = MAP_HEIGHT - 1;
 
+    // Render floor tiles first
     for (let y = top; y <= bottom; y++) {
       for (let x = left; x <= right; x++) {
         const posX = (x - y) * TILE_SIZE;
@@ -550,6 +558,19 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
+    // Render room markers
+    this.rooms.forEach((r) => {
+      const centerX = (r.getLeft() + r.getRight()) / 2;
+      const centerY = (r.getTop() + r.getBottom()) / 2;
+      const markerPosX = (centerX - centerY) * TILE_SIZE;
+      const markerPosY = (centerX + centerY) * (TILE_SIZE / 2);
+      const marker = this.add.rectangle(markerPosX, markerPosY - 10, 10, 10, r.markerColor)
+        .setOrigin(0.5, 0.5)
+        .setDepth(markerPosY + 100);
+      this.roomMarkers.add(marker);
+    });
+
+    // Re-render torches for rooms
     this.rooms.forEach((r) => {
       if (r.hasTorch) {
         let floorTiles = [];
@@ -584,6 +605,7 @@ export default class GameScene extends Phaser.Scene {
       }
     });
 
+    // Render walls after floors to ensure proper overlap
     for (let y = top; y <= bottom; y++) {
       for (let x = left; x <= right; x++) {
         if (this.dungeon[y]?.[x] === 1) {
