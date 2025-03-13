@@ -7,17 +7,13 @@ export class EnvironmentManager {
     this.torchLights = [];
     this.hallwayTorchPoints = [];
     this.enclosedSpaces = [];
-    this.visibleLights = new Set();
     this.totalTorches = 0;
-    this.maxTotalTorches = 25;
-    this.roomDwellTimes = new Map();
-    this.spaceDwellTimes = new Map();
+    this.maxTotalTorches = 20; // Reduced from 25 for performance
     this.TILE_SIZE = scene.TILE_SIZE;
   }
 
   setupHallwayTorchPoints() {
     const hallwayTorchChance = 0.8;
-    let hallwayTorchesPlaced = 0;
     const maxHallwayTorches = 10;
     const left = 0, right = MAP_WIDTH - 1, top = 0, bottom = MAP_HEIGHT - 1;
 
@@ -42,10 +38,9 @@ export class EnvironmentManager {
     }
 
     hallwayFloorTiles.forEach((pos) => {
-      if (hallwayTorchesPlaced >= maxHallwayTorches) return;
+      if (this.hallwayTorchPoints.length >= maxHallwayTorches) return;
       if (Math.random() < hallwayTorchChance) {
         this.hallwayTorchPoints.push({ x: pos.x, y: pos.y, hasTorch: false });
-        hallwayTorchesPlaced++;
       }
     });
   }
@@ -128,7 +123,6 @@ export class EnvironmentManager {
     torch.setPipeline('Light2D');
     const torchLight = this.scene.lights.addLight(posX, posY - 10, radius, 0xffa500, intensity);
     this.torchLights.push(torchLight);
-    this.visibleLights.add(torchLight);
     this.totalTorches++;
     return torchLight;
   }
@@ -140,16 +134,20 @@ export class EnvironmentManager {
     const spawnCullDistance = 2000;
     const intensityCullDistance = 1000;
 
+    const playerX = this.scene.player.x;
+    const playerY = this.scene.player.y;
     const playerTilePos = this.scene.getPlayerTilePosition();
     const worldX = playerTilePos.x;
     const worldY = playerTilePos.y;
 
+    // Optimize room checks with bounding box pre-filter
     const nearbyRooms = this.scene.rooms.filter(room => {
-      const roomCenterX = (room.getLeft() + room.getRight()) / 2;
-      const roomCenterY = (room.getTop() + room.getBottom()) / 2;
-      const roomCenterPosX = (roomCenterX - roomCenterY) * this.TILE_SIZE;
-      const roomCenterPosY = (roomCenterX + roomCenterY) * (this.TILE_SIZE / 2);
-      return Phaser.Math.Distance.Between(this.scene.player.x, this.scene.player.y, roomCenterPosX, roomCenterPosY) <= spawnCullDistance;
+      const minX = (room.getLeft() - room.getTop()) * this.TILE_SIZE;
+      const maxX = (room.getRight() - room.getBottom()) * this.TILE_SIZE;
+      const minY = (room.getLeft() + room.getTop()) * (this.TILE_SIZE / 2);
+      const maxY = (room.getRight() + room.getBottom()) * (this.TILE_SIZE / 2);
+      return playerX >= minX - spawnCullDistance && playerX <= maxX + spawnCullDistance &&
+             playerY >= minY - spawnCullDistance && playerY <= maxY + spawnCullDistance;
     });
 
     nearbyRooms.forEach((room) => {
@@ -157,7 +155,8 @@ export class EnvironmentManager {
       const roomCenterY = (room.getTop() + room.getBottom()) / 2;
       const roomCenterPosX = (roomCenterX - roomCenterY) * this.TILE_SIZE;
       const roomCenterPosY = (roomCenterX + roomCenterY) * (this.TILE_SIZE / 2);
-      const isInRoomBounds = worldX >= room.getLeft() - 2 && worldX <= room.getRight() + 2 && worldY >= room.getTop() - 2 && worldY <= room.getBottom() + 2;
+      const isInRoomBounds = worldX >= room.getLeft() - 2 && worldX <= room.getRight() + 2 &&
+                             worldY >= room.getTop() - 2 && worldY <= room.getBottom() + 2;
 
       if (isInRoomBounds && !room.visited) {
         room.visited = true;
@@ -186,14 +185,19 @@ export class EnvironmentManager {
       }
     });
 
-    const nearbySpaces = this.enclosedSpaces.filter((space) => {
-      const spaceCenterPosX = (space.centerX - space.centerY) * this.TILE_SIZE;
-      const spaceCenterPosY = (space.centerX + space.centerY) * (this.TILE_SIZE / 2);
-      return Phaser.Math.Distance.Between(this.scene.player.x, this.scene.player.y, spaceCenterPosX, spaceCenterPosY) <= spawnCullDistance;
+    // Optimize space checks with bounding box pre-filter
+    const nearbySpaces = this.enclosedSpaces.filter(space => {
+      const minX = (space.minX - space.minY) * this.TILE_SIZE;
+      const maxX = (space.maxX - space.maxY) * this.TILE_SIZE;
+      const minY = (space.minX + space.minY) * (this.TILE_SIZE / 2);
+      const maxY = (space.maxX + space.maxY) * (this.TILE_SIZE / 2);
+      return playerX >= minX - spawnCullDistance && playerX <= maxX + spawnCullDistance &&
+             playerY >= minY - spawnCullDistance && playerY <= maxY + spawnCullDistance;
     });
 
     nearbySpaces.forEach((space) => {
-      const isInSpaceBounds = worldX >= space.minX - 2 && worldX <= space.maxX + 2 && worldY >= space.minY - 2 && worldY <= space.maxY + 2;
+      const isInSpaceBounds = worldX >= space.minX - 2 && worldX <= space.maxX + 2 &&
+                              worldY >= space.minY - 2 && worldY <= space.maxY + 2;
       if (isInSpaceBounds && !space.visited) space.visited = true;
       if (isInSpaceBounds && !space.hasTorch) {
         space.hasTorch = true;
@@ -209,7 +213,7 @@ export class EnvironmentManager {
 
     this.hallwayTorchPoints.forEach((point) => {
       if (point.hasTorch) return;
-      const distance = Phaser.Math.Distance.Between(this.scene.player.x, this.scene.player.y, point.x, point.y);
+      const distance = Phaser.Math.Distance.Between(playerX, playerY, point.x, point.y);
       if (distance > spawnCullDistance) return;
       if (distance < 400) {
         point.hasTorch = true;
@@ -217,13 +221,15 @@ export class EnvironmentManager {
       }
     });
 
+    // Optimize light intensity updates
     this.torchLights.forEach(light => {
-      const distance = Phaser.Math.Distance.Between(this.scene.player.x, this.scene.player.y, light.x, light.y);
+      const distance = Phaser.Math.Distance.Between(playerX, playerY, light.x, light.y);
       light.setIntensity(distance > intensityCullDistance ? 0 : (light.radius === 150 ? 1.5 : 1.8));
     });
 
-    this.roomDwellTimes.clear();
-    this.spaceDwellTimes.clear();
+    // Cleanup inactive lights to prevent memory leaks
+    this.torchLights = this.torchLights.filter(light => light.intensity > 0);
+    this.totalTorches = this.torchLights.length;
   }
 
   spawnTorchesForRoom(room) {
@@ -266,6 +272,5 @@ export class EnvironmentManager {
     this.torches.clear(true, true);
     this.torchLights.forEach(light => this.scene.lights.removeLight(light));
     this.torchLights = [];
-    this.visibleLights.clear();
   }
 }

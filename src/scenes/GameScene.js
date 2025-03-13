@@ -33,16 +33,21 @@ export default class GameScene extends Phaser.Scene {
     this.TILE_SIZE = TILE_SIZE;
     this.hasLighting = false;
     this.maxLights = 50;
+    this.lastEnemyUpdate = 0;
+    this.enemyUpdateInterval = 100;
   }
 
-  // --- Preload Section: Load assets and handle fallbacks ---
   preload() {
     try {
       this.load.image("player-front", "/assets/player-front.png");
       this.load.image("player-back", "/assets/player-back.png");
       this.load.spritesheet("game-assets", "/assets/spritesheet.png", { frameWidth: 16, frameHeight: 16 });
+      this.load.image("enemy-normal", "/assets/enemy-normal.png");
+      this.load.image("enemy-fast", "/assets/enemy-fast.png");
+      this.load.image("enemy-heavy", "/assets/enemy-heavy.png");
+      this.load.image("enemy-marksman", "/assets/enemy-marksman.png");
     } catch (error) {
-      console.error("Failed to load assets:", error);
+      console.error("Failed to load assets during initial attempt:", error);
       this.usePlaceholderSprite = true;
     }
 
@@ -52,21 +57,26 @@ export default class GameScene extends Phaser.Scene {
     });
 
     this.createPlaceholderGraphics();
-
-    // Disable right-click context menu globally
-    this.input.mouse.disableContextMenu();
   }
 
-  // --- Create Placeholder Graphics Section: Fallback graphics for missing assets ---
   createPlaceholderGraphics() {
-    const enemyGraphics = this.make.graphics({ x: 0, y: 0, add: false });
-    enemyGraphics.fillStyle(0xff0000, 1);
-    enemyGraphics.fillRect(0, 0, 16, 16);
-    enemyGraphics.lineStyle(1, 0x000000, 1);
-    enemyGraphics.strokeRect(0, 0, 16, 16);
-    enemyGraphics.generateTexture("enemy-placeholder", 16, 16);
-    enemyGraphics.destroy();
-    console.log("Enemy placeholder generated");
+    const enemyPlaceholderColors = {
+      normal: 0x00ff00,   // Green
+      fast: 0x0000ff,     // Blue
+      heavy: 0xff0000,    // Red
+      random: 0xffff00,   // Yellow
+      marksman: 0xff00ff, // Magenta
+    };
+
+    Object.keys(enemyPlaceholderColors).forEach(type => {
+      const enemyGraphics = this.make.graphics({ x: 0, y: 0, add: false });
+      enemyGraphics.fillStyle(enemyPlaceholderColors[type], 1);
+      enemyGraphics.fillRect(0, 0, 16, 16);
+      enemyGraphics.lineStyle(1, 0x000000, 1);
+      enemyGraphics.strokeRect(0, 0, 16, 16);
+      enemyGraphics.generateTexture(`enemy-placeholder-${type}`, 16, 16);
+      enemyGraphics.destroy();
+    });
 
     if (this.usePlaceholderSprite) {
       const playerGraphics = this.make.graphics({ x: 0, y: 0, add: false });
@@ -97,7 +107,6 @@ export default class GameScene extends Phaser.Scene {
       playerGraphics.destroy();
     }
 
-    // Add bullet placeholder (always generated, no asset dependency)
     const bulletGraphics = this.make.graphics({ x: 0, y: 0, add: false });
     bulletGraphics.fillStyle(0xff0000, 1);
     bulletGraphics.fillRect(0, 0, 8, 8);
@@ -105,10 +114,8 @@ export default class GameScene extends Phaser.Scene {
     bulletGraphics.strokeRect(0, 0, 8, 8);
     bulletGraphics.generateTexture("bullet-placeholder", 8, 8);
     bulletGraphics.destroy();
-    console.log("Bullet placeholder generated");
   }
 
-  // --- Create Section: Initialize game objects and systems ---
   create(data) {
     this.hasLighting = this.renderer && this.renderer.pipelines && !!this.renderer.pipelines.get('Light2D');
     console.log("Has Lighting:", this.hasLighting, "Pipelines:", this.renderer.pipelines);
@@ -119,33 +126,88 @@ export default class GameScene extends Phaser.Scene {
       console.warn("Light2D pipeline not available or renderer not initialized. Disabling lighting.");
     }
 
-    const seed = data?.seed || Math.floor(Math.random() * 1000000).toString(); // New random seed each time
+    const seed = data?.seed || Math.floor(Math.random() * 1000000).toString();
     const { dungeon, rooms, doors, items, enemies } = generateDungeon(seed);
     this.dungeon = dungeon;
-    this.rooms = rooms;
+    this.rooms = Array.isArray(rooms) ? rooms : [];
     this.items = items;
 
     this.bullets = this.physics.add.group();
-    this.enemyManager = new EnemyManager(this);
+    this.enemyManager = new EnemyManager(this, MAP_WIDTH, MAP_HEIGHT);
     this.environmentManager = new EnvironmentManager(this);
     this.weaponManager = new WeaponManager(this);
 
-    this.enemies = enemies.map(enemy => this.enemyManager.spawnEnemy(enemy.x, enemy.y));
+    // Spawn enemies with increased population
+    const firstRoom = this.rooms[0];
+    const enemyTypes = ["normal", "fast", "heavy", "random", "marksman"];
+    this.enemies = enemies.map(enemy => {
+      const assignedType = enemy.type && enemyTypes.includes(enemy.type) ? enemy.type : enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
+      const enemyRoom = this.rooms.find(room =>
+        enemy.x >= room.getLeft() && enemy.x <= room.getRight() &&
+        enemy.y >= room.getTop() && enemy.y <= room.getBottom()
+      );
+      if (enemyRoom === firstRoom) return null;
+      const spawnedEnemy = this.enemyManager.spawnEnemy(enemy.x, enemy.y, assignedType);
+      spawnedEnemy.setVisible(true);
+      spawnedEnemy.setActive(true);
+      return spawnedEnemy;
+    }).filter(enemy => enemy !== null);
+
+    // Ensure at least one enemy per room and increase population
+    this.rooms.forEach(room => {
+      if (room === firstRoom) return; // Skip starting room
+
+      // Ensure at least one enemy per room
+      let enemiesInRoom = this.enemies.filter(enemy => {
+        const enemyTile = this.enemyManager.getEnemyTilePosition(enemy);
+        return (
+          enemyTile.x >= room.getLeft() && enemyTile.x <= room.getRight() &&
+          enemyTile.y >= room.getTop() && enemyTile.y <= room.getBottom()
+        );
+      });
+
+      if (enemiesInRoom.length === 0) {
+        const x = Phaser.Math.Between(room.getLeft() + 1, room.getRight() - 1);
+        const y = Phaser.Math.Between(room.getTop() + 1, room.getBottom() - 1);
+        if (this.dungeon[y]?.[x] === 0) {
+          const assignedType = enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
+          const spawnedEnemy = this.enemyManager.spawnEnemy(x, y, assignedType);
+          spawnedEnemy.setVisible(true);
+          spawnedEnemy.setActive(true);
+          this.enemies.push(spawnedEnemy);
+        }
+      }
+
+      // Add extra enemies based on room size (increased population)
+      const roomArea = (room.getRight() - room.getLeft()) * (room.getBottom() - room.getTop());
+      const extraEnemies = Math.min(Math.floor(roomArea / 30), 4); // Increased from 2 to 4 max enemies
+      for (let i = 0; i < extraEnemies; i++) {
+        const x = Phaser.Math.Between(room.getLeft() + 1, room.getRight() - 1);
+        const y = Phaser.Math.Between(room.getTop() + 1, room.getBottom() - 1);
+        if (this.dungeon[y]?.[x] === 0) {
+          const assignedType = enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
+          const spawnedEnemy = this.enemyManager.spawnEnemy(x, y, assignedType);
+          spawnedEnemy.setVisible(true);
+          spawnedEnemy.setActive(true);
+          this.enemies.push(spawnedEnemy);
+        }
+      }
+    });
 
     this.floorTiles = this.add.group();
     this.wallTiles = this.physics.add.staticGroup();
     this.doorTiles = this.add.group();
     this.roomMarkers = this.add.group();
 
-    this.currentRoom = rooms[0];
-    this.rooms.forEach(room => {
+    this.currentRoom = this.rooms[0];
+    (this.rooms || []).forEach(room => {
       room.hasTorch = false;
       room.visited = false;
     });
 
     this.renderRoom(this.currentRoom);
 
-    doors.forEach((door) => {
+    (doors || []).forEach((door) => {
       if (typeof door.x === "undefined" || typeof door.y === "undefined") return;
       const posX = (door.x - door.y) * TILE_SIZE;
       const posY = (door.x + door.y) * (TILE_SIZE / 2);
@@ -209,34 +271,11 @@ export default class GameScene extends Phaser.Scene {
     this.physics.add.collider(this.enemyManager.getEnemies(), this.wallTiles);
     this.physics.add.collider(this.bullets, this.wallTiles, (bullet, wall) => {
       bullet.destroy();
-      const light = bullet.getData('light');
-      if (light) {
-        this.tweens.add({
-          targets: light,
-          intensity: 0,
-          duration: 200,
-          onComplete: () => {
-            this.lights.removeLight(light);
-            bullet.setData('light', null);
-          },
-        });
-      }
     });
+    this.physics.add.collider(this.enemyManager.getEnemies(), this.enemyManager.getEnemies());
     this.physics.add.overlap(this.player, this.doorTiles, this.handleDoorTransition, null, this);
     this.physics.add.overlap(this.bullets, this.enemyManager.getEnemies(), (bullet, enemy) => {
       this.enemyManager.handleBulletEnemyCollision(bullet, enemy);
-      const light = bullet.getData('light');
-      if (light) {
-        this.tweens.add({
-          targets: light,
-          intensity: 0,
-          duration: 200,
-          onComplete: () => {
-            this.lights.removeLight(light);
-            bullet.setData('light', null);
-          },
-        });
-      }
     }, null, this);
     this.physics.add.overlap(this.player, this.enemyManager.getEnemies(), this.handlePlayerEnemyCollision, null, this);
 
@@ -247,10 +286,9 @@ export default class GameScene extends Phaser.Scene {
     this.registry.set('noclipMode', this.noclipMode);
     this.registry.set('currentRoom', this.currentRoom);
     this.registry.set('hasLighting', this.hasLighting);
-    this.registry.set('seed', seed); // Store the current seed
+    this.registry.set('seed', seed);
   }
 
-  // --- Handle Player-Enemy Collision ---
   handlePlayerEnemyCollision(player, enemy) {
     this.playerHealth -= 10 * this.game.loop.delta / 1000;
     this.playerHealth = Math.max(0, this.playerHealth);
@@ -261,42 +299,6 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // --- Update Bullet Lights ---
-  updateBulletLights() {
-    if (!this.hasLighting) return;
-    const activeLights = this.lights.lights.length;
-    console.log("Active lights:", activeLights);
-
-    if (activeLights > this.maxLights) {
-      console.warn("Max light limit reached:", this.maxLights, "Removing oldest lights.");
-      while (this.lights.lights.length > this.maxLights - 10) {
-        const oldestLight = this.lights.lights[0];
-        this.lights.removeLight(oldestLight);
-      }
-    }
-
-    this.bullets.getChildren().forEach(bullet => {
-      const light = bullet.getData('light');
-      if (light && bullet.active) {
-        light.x = bullet.x;
-        light.y = bullet.y;
-        light.setIntensity(2.0);
-      } else if (light && !bullet.active) {
-        console.log("Removing light for inactive bullet");
-        this.tweens.add({
-          targets: light,
-          intensity: 0,
-          duration: 200,
-          onComplete: () => {
-            this.lights.removeLight(light);
-            bullet.setData('light', null);
-          },
-        });
-      }
-    });
-  }
-
-  // --- Debug Shooting Function (Now using left-click) ---
   debugShoot() {
     const currentTime = this.time.now;
     if (currentTime - this.lastShotTime < this.shootCooldown) return;
@@ -305,17 +307,15 @@ export default class GameScene extends Phaser.Scene {
     if (this.weaponManager && this.weaponManager.fireBullet) {
       this.weaponManager.fireBullet(this.player.x, this.player.y, pointer.worldX, pointer.worldY);
       this.lastShotTime = currentTime;
-      console.log(`Debug shot fired toward mouse: (${pointer.worldX}, ${pointer.worldY})`);
     } else {
       console.error("WeaponManager or fireBullet is undefined!");
     }
   }
 
-  // --- Render Room Section ---
   renderRoom(room) {
     if (!room) return;
 
-    this.rooms.forEach(r => {
+    (this.rooms || []).forEach(r => {
       if (r.minimapText) {
         r.minimapText.destroy();
         r.minimapText = null;
@@ -346,7 +346,7 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    this.rooms.forEach((r) => {
+    (this.rooms || []).forEach((r) => {
       const centerX = (r.getLeft() + r.getRight()) / 2;
       const centerY = (r.getTop() + r.getBottom()) / 2;
       const markerPosX = (centerX - centerY) * TILE_SIZE;
@@ -357,7 +357,7 @@ export default class GameScene extends Phaser.Scene {
       this.roomMarkers.add(marker);
     });
 
-    this.rooms.forEach((r) => this.environmentManager.spawnTorchesForRoom(r));
+    (this.rooms || []).forEach((r) => this.environmentManager.spawnTorchesForRoom(r));
     this.environmentManager.spawnTorchesForEnclosedSpaces();
     this.environmentManager.spawnTorchesForHallways();
 
@@ -365,7 +365,7 @@ export default class GameScene extends Phaser.Scene {
       for (let x = left; x <= right; x++) {
         if (this.dungeon[y]?.[x] === 1) {
           let adjacentToFloor = false;
-          for (let dy = -1; dy <= 1; dy++) {
+          for (let dy = -1; dy <= 1 && !adjacentToFloor; dy++) {
             for (let dx = -1; dx <= 1; dx++) {
               if (dx === 0 && dy === 0) continue;
               const nx = x + dx;
@@ -396,7 +396,6 @@ export default class GameScene extends Phaser.Scene {
     this.wallTiles.refresh();
   }
 
-  // --- Update Camera Bounds Section ---
   updateCameraBounds() {
     const room = this.currentRoom;
     const margin = Math.max(MAP_WIDTH, MAP_HEIGHT) / 2;
@@ -414,7 +413,6 @@ export default class GameScene extends Phaser.Scene {
     this.registry.events.emit('updateRoom', this.currentRoom);
   }
 
-  // --- Handle Door Transition Section ---
   handleDoorTransition(player, door) {
     const nextRoomId = door.roomId;
     const nextRoom = this.rooms[nextRoomId];
@@ -432,7 +430,6 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // --- Move Player to Safe Position Section ---
   movePlayerToSafePosition() {
     const playerPos = this.getPlayerTilePosition();
     const canvasBoundary = { minX: 0, maxX: MAP_WIDTH - 1, minY: 0, maxY: MAP_HEIGHT - 1 };
@@ -494,14 +491,12 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // --- Get Player Tile Position Section ---
   getPlayerTilePosition() {
     const tileX = Math.floor((this.player.x / TILE_SIZE + this.player.y / (TILE_SIZE / 2)) / 2);
     const tileY = Math.floor((this.player.y / (TILE_SIZE / 2) - this.player.x / TILE_SIZE) / 2);
     return { x: tileX, y: tileY };
   }
 
-  // --- Update Section: Main game loop ---
   update(time, delta) {
     if (!this.player) return;
 
@@ -532,7 +527,10 @@ export default class GameScene extends Phaser.Scene {
     if (this.playerLight) this.playerLight.setPosition(this.player.x, this.player.y);
     this.environmentManager.updateTorches(delta);
 
-    this.enemyManager.updateEnemyAI();
+    if (time - this.lastEnemyUpdate >= this.enemyUpdateInterval) {
+      this.enemyManager.updateEnemyAI(time);
+      this.lastEnemyUpdate = time;
+    }
 
     if (!this.noclipMode && this.player.body.blocked.none && this.player.body.velocity.lengthSq() < 10) {
       const worldX = Math.floor((this.player.x / TILE_SIZE + this.player.y / (TILE_SIZE / 2)) / 2);
@@ -599,15 +597,12 @@ export default class GameScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(this.keys.F)) {
       this.debugShoot();
     }
-
-    this.updateBulletLights();
   }
 
-  // --- Handle Player Death ---
   handlePlayerDeath() {
     this.player.setVisible(false);
     this.player.body.setVelocity(0);
     this.scene.launch("GameOverScene", { x: this.player.x, y: this.player.y });
-    this.scene.pause(); // Pause GameScene to prevent further updates
+    this.scene.pause();
   }
 }
