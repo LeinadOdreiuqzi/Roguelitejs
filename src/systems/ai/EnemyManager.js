@@ -16,6 +16,7 @@ export class EnemyManager {
       enemy1.body.setVelocity(0, 0);
       enemy2.body.setVelocity(0, 0);
     });
+    this.healthBarHideTimeout = 3000; // 3 seconds timeout before hiding health bar
   }
 
   getEnemyStats(type) {
@@ -54,6 +55,7 @@ export class EnemyManager {
     const personality = personalities[Math.floor(Math.random() * personalities.length)];
     const enemyData = {
       health: stats.health,
+      maxHealth: stats.health,
       type,
       speed: stats.speed * (personality === "reckless" ? 1.2 : personality === "cautious" ? 0.8 : 1),
       attackRange: stats.attackRange * (personality === "aggressive" ? 1.2 : personality === "cautious" ? 0.8 : 1),
@@ -71,6 +73,7 @@ export class EnemyManager {
       moveOffset: Phaser.Math.Between(0, 1000),
       lastSleepParticleTime: 0,
       xpValue: stats.xpValue,
+      lastDamageTime: 0, // New field to track last damage time
     };
 
     if (!enemySprite.setData) {
@@ -86,7 +89,69 @@ export class EnemyManager {
     enemySprite.body.setSize(width, height).setOffset((width - 16) / 2, height - 8);
     enemySprite.state = "PATROL";
 
+    // Create health bar (initially hidden)
+    const healthBarWidth = type === "boss" ? 60 : type === "heavy" ? 40 : 20;
+    const healthBarHeight = type === "boss" ? 6 : 4;
+    const healthBar = this.scene.add.graphics();
+    healthBar.setVisible(false); // Hidden by default
+    enemySprite.healthBar = healthBar;
+    enemySprite.healthBarWidth = healthBarWidth;
+    enemySprite.healthBarHeight = healthBarHeight;
+    this.updateHealthBar(enemySprite);
+
     return enemySprite;
+  }
+
+  updateHealthBar(enemySprite) {
+    const enemyData = enemySprite.getData("enemyData");
+    if (!enemyData || !enemySprite.healthBar) return;
+
+    const healthBar = enemySprite.healthBar;
+    const barWidth = enemySprite.healthBarWidth;
+    const barHeight = enemySprite.healthBarHeight;
+    healthBar.clear();
+
+    // Position above the enemy
+    const x = enemySprite.x - barWidth / 2;
+    const y = enemySprite.y - enemySprite.height / 2 - 10;
+
+    // Background (red)
+    healthBar.fillStyle(0xff0000, 1);
+    healthBar.fillRect(x, y, barWidth, barHeight);
+
+    // Foreground (green, scaled by health percentage)
+    const healthPercent = enemyData.health / enemyData.maxHealth;
+    const currentWidth = barWidth * healthPercent;
+    healthBar.fillStyle(0x00ff00, 1);
+    healthBar.fillRect(x, y, currentWidth, barHeight);
+
+    // Border
+    healthBar.lineStyle(1, 0x000000, 1);
+    healthBar.strokeRect(x, y, barWidth, barHeight);
+
+    // Set depth
+    healthBar.setDepth(enemySprite.y + 1);
+  }
+
+  showDamageNumber(enemySprite, damage) {
+    const x = enemySprite.x;
+    const y = enemySprite.y - enemySprite.height / 2;
+
+    const damageText = this.scene.add.text(x, y, `${damage}`, {
+      fontSize: "12px",
+      color: "#ff0000",
+      stroke: "#000000",
+      strokeThickness: 2,
+    }).setOrigin(0.5, 0.5).setDepth(enemySprite.y + 2);
+
+    this.scene.tweens.add({
+      targets: damageText,
+      y: y - 20,
+      alpha: 0,
+      duration: 1000,
+      ease: "Power1",
+      onComplete: () => damageText.destroy(),
+    });
   }
 
   isPlayerInFOV(enemySprite) {
@@ -408,23 +473,31 @@ export class EnemyManager {
   }
 
   handleBulletEnemyCollision(bullet, enemySprite) {
-    const damage = bullet.getData('damage') || 1; // Lowered default damage to 1
+    const damage = bullet.getData('damage') || 1;
     const enemyData = enemySprite.getData("enemyData");
-  
+
     if (!enemyData) {
       console.error(`Invalid enemy data detected for sprite:`, enemySprite);
       bullet.destroy();
       return;
     }
-  
+
     console.log(`Pre-collision: Enemy ${enemyData.type} health = ${enemyData.health}, damage applied = ${damage}`);
     enemyData.health = Math.max(0, enemyData.health - damage);
+    enemyData.lastDamageTime = this.scene.time.now; // Reset timer on damage
     console.log(`Post-collision: Enemy ${enemyData.type} health reduced to ${enemyData.health}`);
-  
+
+    this.showDamageNumber(enemySprite, damage);
+    this.updateHealthBar(enemySprite);
+    enemySprite.healthBar.setVisible(true); // Show health bar on damage
+
     bullet.destroy();
-  
+
     if (enemyData.health <= 0) {
       console.log(`Enemy ${enemyData.type} killed, awarding ${enemyData.xpValue} XP`);
+      if (enemySprite.healthBar) {
+        enemySprite.healthBar.destroy();
+      }
       enemySprite.destroy();
       this.enemies.remove(enemySprite, true);
       this.scene.addXP(enemyData.xpValue);

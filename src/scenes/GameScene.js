@@ -315,6 +315,22 @@ export default class GameScene extends Phaser.Scene {
         bullet.destroy();
       }
     }, null, this);
+  
+    // Add update loop for health bars and visibility
+    this.events.on('update', (time, delta) => {
+      this.enemyManager.enemies.getChildren().forEach(enemySprite => {
+        if (enemySprite.active && enemySprite.healthBar) {
+          this.enemyManager.updateHealthBar(enemySprite);
+          const enemyData = enemySprite.getData("enemyData");
+          if (enemyData && enemyData.lastDamageTime > 0) {
+            const timeSinceLastDamage = time - enemyData.lastDamageTime;
+            if (timeSinceLastDamage > this.enemyManager.healthBarHideTimeout) {
+              enemySprite.healthBar.setVisible(false);
+            }
+          }
+        }
+      });
+    });
     this.physics.add.overlap(this.player, this.enemyManager.getEnemies(), this.handlePlayerEnemyCollision, null, this);
 
     this.updateCameraBounds();
