@@ -5,7 +5,6 @@ import { EnemyManager } from "../systems/ai/EnemyManager.js";
 import { EnvironmentManager } from "../systems/environment/EnvironmentManager.js";
 import { TILE_SIZE, MAP_WIDTH, MAP_HEIGHT } from "../utils/Constants.js";
 
-// Main GameScene class
 export default class GameScene extends Phaser.Scene {
   constructor() {
     super("GameScene");
@@ -14,22 +13,21 @@ export default class GameScene extends Phaser.Scene {
     this.playerLight = null;
     this.spawnPoint = null;
 
-    // Asset flags
     this.usePlaceholderSprite = false;
 
-    // Player and gameplay
-    this.playerHealth = 100;
+    this.playerHealth = 120;
+    this.playerLevel = 1;
+    this.playerXP = 0;
+    this.skillPoints = 0; // For future skill tree
     this.items = [];
     this.weaponManager = null;
     this.noclipMode = false;
     this.lastShotTime = 0;
-    this.shootCooldown = 200;
+    this.shootCooldown = 300;
 
-    // Managers
     this.enemyManager = null;
     this.environmentManager = null;
 
-    // Constants
     this.TILE_SIZE = TILE_SIZE;
     this.hasLighting = false;
     this.maxLights = 50;
@@ -61,20 +59,23 @@ export default class GameScene extends Phaser.Scene {
 
   createPlaceholderGraphics() {
     const enemyPlaceholderColors = {
-      normal: 0x00ff00,   // Green
-      fast: 0x0000ff,     // Blue
-      heavy: 0xff0000,    // Red
-      random: 0xffff00,   // Yellow
-      marksman: 0xff00ff, // Magenta
+      normal: 0x00ff00,
+      fast: 0x0000ff,
+      heavy: 0xff0000,
+      random: 0xffff00,
+      marksman: 0xff00ff,
+      boss: 0x800080,
     };
 
     Object.keys(enemyPlaceholderColors).forEach(type => {
       const enemyGraphics = this.make.graphics({ x: 0, y: 0, add: false });
       enemyGraphics.fillStyle(enemyPlaceholderColors[type], 1);
-      enemyGraphics.fillRect(0, 0, 16, 16);
+      const width = type === "boss" ? 48 : type === "heavy" ? 32 : 16;
+      const height = type === "boss" ? 48 : type === "heavy" ? 32 : 16;
+      enemyGraphics.fillRect(0, 0, width, height);
       enemyGraphics.lineStyle(1, 0x000000, 1);
-      enemyGraphics.strokeRect(0, 0, 16, 16);
-      enemyGraphics.generateTexture(`enemy-placeholder-${type}`, 16, 16);
+      enemyGraphics.strokeRect(0, 0, width, height);
+      enemyGraphics.generateTexture(`enemy-placeholder-${type}`, width, height);
       enemyGraphics.destroy();
     });
 
@@ -130,14 +131,24 @@ export default class GameScene extends Phaser.Scene {
     const { dungeon, rooms, doors, items, enemies } = generateDungeon(seed);
     this.dungeon = dungeon;
     this.rooms = Array.isArray(rooms) ? rooms : [];
+
+    if (this.rooms.length < 2) {
+      console.warn("Dungeon generated with less than 2 rooms. Forcing generation of at least 2 rooms.");
+      const fallbackDungeon = generateDungeon(seed + "fallback");
+      this.rooms = Array.isArray(fallbackDungeon.rooms) ? fallbackDungeon.rooms : [];
+      this.dungeon = fallbackDungeon.dungeon;
+      if (this.rooms.length < 2) {
+        console.error("Unable to generate dungeon with at least 2 rooms. Boss spawn may fail.");
+      }
+    }
+
     this.items = items;
 
     this.bullets = this.physics.add.group();
     this.enemyManager = new EnemyManager(this, MAP_WIDTH, MAP_HEIGHT);
     this.environmentManager = new EnvironmentManager(this);
-    this.weaponManager = new WeaponManager(this);
+    this.weaponManager = new WeaponManager(this, this.getShotStats());
 
-    // Spawn enemies with increased population
     const firstRoom = this.rooms[0];
     const enemyTypes = ["normal", "fast", "heavy", "random", "marksman"];
     this.enemies = enemies.map(enemy => {
@@ -153,11 +164,31 @@ export default class GameScene extends Phaser.Scene {
       return spawnedEnemy;
     }).filter(enemy => enemy !== null);
 
-    // Ensure at least one enemy per room and increase population
-    this.rooms.forEach(room => {
-      if (room === firstRoom) return; // Skip starting room
+    let largestRoom = null;
+    let maxArea = 0;
+    for (let i = 1; i < this.rooms.length; i++) {
+      const room = this.rooms[i];
+      const area = room.width * room.height;
+      if (area > maxArea) {
+        maxArea = area;
+        largestRoom = room;
+      }
+    }
+    if (!largestRoom) {
+      console.warn("No suitable room found for boss spawn. Defaulting to second room if available.");
+      largestRoom = this.rooms[1] || this.rooms[0];
+    }
+    console.log("Boss spawning in room:", largestRoom.id, "with area:", maxArea);
+    const bossX = (largestRoom.getLeft() + largestRoom.getRight()) / 2;
+    const bossY = (largestRoom.getTop() + largestRoom.getBottom()) / 2;
+    const boss = this.enemyManager.spawnEnemy(bossX, bossY, "boss");
+    boss.setVisible(true);
+    boss.setActive(true);
+    this.enemies.push(boss);
 
-      // Ensure at least one enemy per room
+    this.rooms.forEach(room => {
+      if (room === firstRoom || room === largestRoom) return;
+
       let enemiesInRoom = this.enemies.filter(enemy => {
         const enemyTile = this.enemyManager.getEnemyTilePosition(enemy);
         return (
@@ -178,9 +209,8 @@ export default class GameScene extends Phaser.Scene {
         }
       }
 
-      // Add extra enemies based on room size (increased population)
       const roomArea = (room.getRight() - room.getLeft()) * (room.getBottom() - room.getTop());
-      const extraEnemies = Math.min(Math.floor(roomArea / 30), 4); // Increased from 2 to 4 max enemies
+      const extraEnemies = Math.min(Math.floor(roomArea / 30), 4);
       for (let i = 0; i < extraEnemies; i++) {
         const x = Phaser.Math.Between(room.getLeft() + 1, room.getRight() - 1);
         const y = Phaser.Math.Between(room.getTop() + 1, room.getBottom() - 1);
@@ -274,8 +304,16 @@ export default class GameScene extends Phaser.Scene {
     });
     this.physics.add.collider(this.enemyManager.getEnemies(), this.enemyManager.getEnemies());
     this.physics.add.overlap(this.player, this.doorTiles, this.handleDoorTransition, null, this);
-    this.physics.add.overlap(this.bullets, this.enemyManager.getEnemies(), (bullet, enemy) => {
-      this.enemyManager.handleBulletEnemyCollision(bullet, enemy);
+    this.physics.add.overlap(this.bullets, this.enemyManager.enemies, (bullet, enemySprite) => {
+      console.log("Overlap detected with enemy sprite:", enemySprite);
+      const enemyData = enemySprite.getData("enemyData");
+      if (enemyData) {
+        console.log("Valid enemy data found, processing collision...");
+        this.enemyManager.handleBulletEnemyCollision(bullet, enemySprite);
+      } else {
+        console.error("No enemy data found on sprite:", enemySprite);
+        bullet.destroy();
+      }
     }, null, this);
     this.physics.add.overlap(this.player, this.enemyManager.getEnemies(), this.handlePlayerEnemyCollision, null, this);
 
@@ -287,6 +325,9 @@ export default class GameScene extends Phaser.Scene {
     this.registry.set('currentRoom', this.currentRoom);
     this.registry.set('hasLighting', this.hasLighting);
     this.registry.set('seed', seed);
+    this.registry.set('playerLevel', this.playerLevel);
+    this.registry.set('playerXP', this.playerXP);
+    this.registry.set('skillPoints', this.skillPoints);
   }
 
   handlePlayerEnemyCollision(player, enemy) {
@@ -497,6 +538,69 @@ export default class GameScene extends Phaser.Scene {
     return { x: tileX, y: tileY };
   }
 
+  getShotStats() {
+    const velocity = 300 + (this.playerLevel - 1) * 20;
+    const damage = 1 + (this.playerLevel - 1) * 0.2; // Lowered base damage to 1, scaling to 0.2 per level
+    this.shootCooldown = Math.max(100, 300 - (this.playerLevel - 1) * 20); // Minimum cooldown of 100ms
+    console.log(`Shot stats: damage = ${damage}, velocity = ${velocity}, cooldown = ${this.shootCooldown}`);
+    return { velocity, damage, shootCooldown: this.shootCooldown };
+  }
+
+  getXPForNextLevel() {
+    const baseXP = 100;
+    const scalingFactor = 1.5;
+    return Math.round(baseXP * Math.pow(scalingFactor, this.playerLevel - 1));
+  }
+
+  addXP(amount) {
+    if (typeof amount !== 'number' || amount <= 0) {
+      console.error(`Invalid XP amount: ${amount}`);
+      return;
+    }
+
+    console.log(`Adding ${amount} XP to player (Level ${this.playerLevel}, Current XP: ${this.playerXP})`);
+    this.playerXP += amount;
+
+    const xpText = this.add.text(this.player.x, this.player.y - 40, `+${amount} XP`, {
+      fontSize: "14px",
+      color: "#00ff00",
+      stroke: "#000000",
+      strokeThickness: 3,
+    }).setDepth(1001);
+    this.tweens.add({
+      targets: xpText,
+      alpha: 0,
+      y: xpText.y - 20,
+      duration: 1000,
+      onComplete: () => xpText.destroy(),
+    });
+
+    this.registry.set('playerXP', this.playerXP);
+    this.registry.events.emit('xpChanged', this.playerXP);
+
+    let xpNeeded = this.getXPForNextLevel();
+    while (this.playerXP >= xpNeeded && this.playerLevel < 10) {
+      this.playerXP -= xpNeeded;
+      this.levelUp();
+      xpNeeded = this.getXPForNextLevel();
+      this.registry.set('playerXP', this.playerXP);
+      this.registry.events.emit('xpChanged', this.playerXP);
+    }
+  }
+
+  levelUp() {
+    this.playerLevel += 1;
+    this.skillPoints += 1;
+    console.log(`Player leveled up to Level ${this.playerLevel}! Skill Points: ${this.skillPoints}`);
+
+    this.registry.set('playerLevel', this.playerLevel);
+    this.registry.set('skillPoints', this.skillPoints);
+    this.registry.events.emit('levelChanged', this.playerLevel);
+
+    const newStats = this.getShotStats();
+    this.weaponManager.updateShotStats(newStats);
+  }
+
   update(time, delta) {
     if (!this.player) return;
 
@@ -597,6 +701,9 @@ export default class GameScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(this.keys.F)) {
       this.debugShoot();
     }
+
+    const stats = this.getShotStats();
+    this.shootCooldown = stats.shootCooldown;
   }
 
   handlePlayerDeath() {
