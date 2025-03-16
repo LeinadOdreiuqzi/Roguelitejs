@@ -2,7 +2,10 @@ import Phaser from "phaser";
 import MenuScene from "./scenes/MenuScene";
 import GameScene from "./scenes/GameScene";
 import HUDScene from "./scenes/HUDScene";
-import GameOverScene from "./scenes/GameOverScene"; // New scene
+import GameOverScene from "./scenes/GameOverScene";
+import SkillMenuScene from "./scenes/SkillMenuScene.js"; // New scene
+import ChestScene from "./scenes/ChestScene.js"; // New scene
+import DebugScene from './scenes/debugScene.js'; // New scene
 
 const config = {
   type: Phaser.WEBGL,
@@ -15,7 +18,7 @@ const config = {
       debug: false,
     },
   },
-  scene: [MenuScene, GameScene, HUDScene, GameOverScene], // Added GameOverScene
+  scene: [MenuScene, GameScene, HUDScene, GameOverScene, SkillMenuScene, ChestScene, DebugScene], 
   backgroundColor: "#000000",
   scale: {
     mode: Phaser.Scale.FIT,

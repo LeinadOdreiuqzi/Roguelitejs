@@ -12,27 +12,30 @@ export default class GameScene extends Phaser.Scene {
     this.spawnMarkerLight = null;
     this.playerLight = null;
     this.spawnPoint = null;
-
     this.usePlaceholderSprite = false;
-
     this.playerHealth = 120;
+    this.maxHealth = 120;
+    this.playerSpeed = 200;
     this.playerLevel = 1;
     this.playerXP = 0;
-    this.skillPoints = 0; // For future skill tree
+    this.skillPoints = 0;
     this.items = [];
+    this.hasEnchantedTotem = false;
+    this.luck = 0;
     this.weaponManager = null;
     this.noclipMode = false;
     this.lastShotTime = 0;
-    this.shootCooldown = 300;
-
+    this.shootCooldown = 400;
     this.enemyManager = null;
     this.environmentManager = null;
-
+    this.chests = null;
+    this.droppedItems = null;
     this.TILE_SIZE = TILE_SIZE;
     this.hasLighting = false;
     this.maxLights = 50;
     this.lastEnemyUpdate = 0;
     this.enemyUpdateInterval = 100;
+    this.chestPromptText = null;
   }
 
   preload() {
@@ -44,17 +47,19 @@ export default class GameScene extends Phaser.Scene {
       this.load.image("enemy-fast", "/assets/enemy-fast.png");
       this.load.image("enemy-heavy", "/assets/enemy-heavy.png");
       this.load.image("enemy-marksman", "/assets/enemy-marksman.png");
+      this.load.image("chest", "/assets/chest.png");
     } catch (error) {
-      console.error("Failed to load assets during initial attempt:", error);
+      console.error("Asset loading error:", error);
       this.usePlaceholderSprite = true;
     }
 
     this.load.on("fileerror", (file) => {
-      console.error(`Failed to load file: ${file.key}`, file);
-      if (file.key.includes("player")) this.usePlaceholderSprite = true;
+      console.error("File loading failed:", file.key, file);
+      if (file.key.includes("player") || file.key.includes("chest")) this.usePlaceholderSprite = true;
     });
 
     this.createPlaceholderGraphics();
+    this.createItemIcons();
   }
 
   createPlaceholderGraphics() {
@@ -115,11 +120,62 @@ export default class GameScene extends Phaser.Scene {
     bulletGraphics.strokeRect(0, 0, 8, 8);
     bulletGraphics.generateTexture("bullet-placeholder", 8, 8);
     bulletGraphics.destroy();
+
+    const chestGraphics = this.make.graphics({ x: 0, y: 0, add: false });
+    chestGraphics.fillStyle(0x8B4513, 1);
+    chestGraphics.fillRect(4, 8, 24, 16);
+    chestGraphics.lineStyle(2, 0x000000, 1);
+    chestGraphics.strokeRect(4, 8, 24, 16);
+    chestGraphics.fillStyle(0xFFD700, 1);
+    chestGraphics.fillRect(6, 6, 20, 2);
+    chestGraphics.strokeRect(6, 6, 20, 2);
+    chestGraphics.fillStyle(0xA9A9A9, 1);
+    chestGraphics.fillRect(14, 16, 4, 6);
+    chestGraphics.strokeRect(14, 16, 4, 6);
+    chestGraphics.generateTexture("chest-placeholder", 32, 32);
+    chestGraphics.destroy();
+  }
+
+  createItemIcons() {
+    const rapidFireGraphics = this.make.graphics({ x: 0, y: 0, add: false });
+    rapidFireGraphics.fillStyle(0x00BFFF, 1);
+    rapidFireGraphics.fillRect(8, 8, 16, 16);
+    rapidFireGraphics.lineStyle(2, 0x000000, 1);
+    rapidFireGraphics.strokeRect(8, 8, 16, 16);
+    rapidFireGraphics.fillStyle(0xff0000, 1);
+    rapidFireGraphics.fillCircle(16, 16, 4);
+    rapidFireGraphics.generateTexture("rapidFireIcon", 32, 32);
+    rapidFireGraphics.destroy();
+
+    const nimbleHandsGraphics = this.make.graphics({ x: 0, y: 0, add: false });
+    nimbleHandsGraphics.fillStyle(0x00BFFF, 1);
+    nimbleHandsGraphics.fillCircle(16, 16, 12);
+    nimbleHandsGraphics.lineStyle(2, 0x000000, 1);
+    nimbleHandsGraphics.strokeCircle(16, 16, 12);
+    nimbleHandsGraphics.generateTexture("nimbleHandsIcon", 32, 32);
+    nimbleHandsGraphics.destroy();
+
+    const bootsGraphics = this.make.graphics({ x: 0, y: 0, add: false });
+    bootsGraphics.fillStyle(0x00BFFF, 1);
+    bootsGraphics.fillRect(8, 12, 8, 16);
+    bootsGraphics.fillRect(16, 12, 8, 16);
+    bootsGraphics.lineStyle(2, 0x000000, 1);
+    bootsGraphics.strokeRect(8, 12, 8, 16);
+    bootsGraphics.strokeRect(16, 12, 8, 16);
+    bootsGraphics.generateTexture("bootsIcon", 32, 32);
+    bootsGraphics.destroy();
+
+    const spikesGraphics = this.make.graphics({ x: 0, y: 0, add: false });
+    spikesGraphics.fillStyle(0x00BFFF, 1);
+    spikesGraphics.fillTriangle(8, 24, 16, 8, 24, 24);
+    spikesGraphics.lineStyle(2, 0x000000, 1);
+    spikesGraphics.strokeTriangle(8, 24, 16, 8, 24, 24);
+    spikesGraphics.generateTexture("spikesIcon", 32, 32);
+    spikesGraphics.destroy();
   }
 
   create(data) {
     this.hasLighting = this.renderer && this.renderer.pipelines && !!this.renderer.pipelines.get('Light2D');
-    console.log("Has Lighting:", this.hasLighting, "Pipelines:", this.renderer.pipelines);
     if (this.hasLighting) {
       this.lights.enable();
       this.lights.setAmbientColor(0x222222);
@@ -148,6 +204,8 @@ export default class GameScene extends Phaser.Scene {
     this.enemyManager = new EnemyManager(this, MAP_WIDTH, MAP_HEIGHT);
     this.environmentManager = new EnvironmentManager(this);
     this.weaponManager = new WeaponManager(this, this.getShotStats());
+    this.chests = this.physics.add.group();
+    this.droppedItems = this.physics.add.group();
 
     const firstRoom = this.rooms[0];
     const enemyTypes = ["normal", "fast", "heavy", "random", "marksman"];
@@ -178,7 +236,6 @@ export default class GameScene extends Phaser.Scene {
       console.warn("No suitable room found for boss spawn. Defaulting to second room if available.");
       largestRoom = this.rooms[1] || this.rooms[0];
     }
-    console.log("Boss spawning in room:", largestRoom.id, "with area:", maxArea);
     const bossX = (largestRoom.getLeft() + largestRoom.getRight()) / 2;
     const bossY = (largestRoom.getTop() + largestRoom.getBottom()) / 2;
     const boss = this.enemyManager.spawnEnemy(bossX, bossY, "boss");
@@ -186,8 +243,11 @@ export default class GameScene extends Phaser.Scene {
     boss.setActive(true);
     this.enemies.push(boss);
 
+    console.log("Attempting to spawn debug chest in first room...");
+    this.spawnChest(firstRoom, true);
+
     this.rooms.forEach(room => {
-      if (room === firstRoom || room === largestRoom) return;
+      if (room === firstRoom) return;
 
       let enemiesInRoom = this.enemies.filter(enemy => {
         const enemyTile = this.enemyManager.getEnemyTilePosition(enemy);
@@ -221,6 +281,14 @@ export default class GameScene extends Phaser.Scene {
           spawnedEnemy.setActive(true);
           this.enemies.push(spawnedEnemy);
         }
+      }
+
+      console.log(`Rolling for chest spawn in room ${room.id}...`);
+      if (Phaser.Math.Between(0, 99) < 50) {
+        console.log(`Chest spawn triggered for room ${room.id}`);
+        this.spawnChest(room);
+      } else {
+        console.log(`No chest spawned in room ${room.id}`);
       }
     });
 
@@ -286,6 +354,8 @@ export default class GameScene extends Phaser.Scene {
       SPACE: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
       C: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.C),
       F: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F),
+      E: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E),
+      O: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.O)
     };
 
     this.input.on("pointerdown", (pointer) => {
@@ -305,18 +375,31 @@ export default class GameScene extends Phaser.Scene {
     this.physics.add.collider(this.enemyManager.getEnemies(), this.enemyManager.getEnemies());
     this.physics.add.overlap(this.player, this.doorTiles, this.handleDoorTransition, null, this);
     this.physics.add.overlap(this.bullets, this.enemyManager.enemies, (bullet, enemySprite) => {
-      console.log("Overlap detected with enemy sprite:", enemySprite);
       const enemyData = enemySprite.getData("enemyData");
       if (enemyData) {
-        console.log("Valid enemy data found, processing collision...");
-        this.enemyManager.handleBulletEnemyCollision(bullet, enemySprite);
+        this.weaponManager.handleBulletEnemyCollision(bullet, enemySprite); // Delegate to WeaponManager
+        this.addXP(1);
+        if (enemyData.health <= 0) {
+          const isBoss = enemyData.type === "boss";
+          if (isBoss || Phaser.Math.Between(0, 99) < 50) {
+            const enemyTile = this.enemyManager.getEnemyTilePosition(enemySprite);
+            const room = this.rooms.find(room =>
+              enemyTile.x >= room.getLeft() && enemyTile.x <= room.getRight() &&
+              enemyTile.y >= room.getTop() && enemyTile.y <= room.getBottom()
+            );
+            if (room && room !== this.rooms[0]) {
+              console.log(`Enemy drop triggered chest spawn in room ${room.id}`);
+              this.spawnChest(room);
+            } else {
+              console.warn(`Could not find valid room for enemy drop chest spawn at tile (${enemyTile.x}, ${enemyTile.y})`);
+            }
+          }
+        }
       } else {
-        console.error("No enemy data found on sprite:", enemySprite);
         bullet.destroy();
       }
     }, null, this);
-  
-    // Add update loop for health bars and visibility
+
     this.events.on('update', (time, delta) => {
       this.enemyManager.enemies.getChildren().forEach(enemySprite => {
         if (enemySprite.active && enemySprite.healthBar) {
@@ -330,13 +413,44 @@ export default class GameScene extends Phaser.Scene {
           }
         }
       });
+
+      this.chests.getChildren().forEach(chest => {
+        const light = chest.getData("light");
+        if (light) {
+          light.setPosition(chest.x, chest.y);
+        }
+      });
+
+      this.droppedItems.getChildren().forEach(item => {
+        const light = item.getData("light");
+        if (light) light.setPosition(item.x, item.y);
+      });
+
+      if (Phaser.Input.Keyboard.JustDown(this.keys.E)) {
+        const playerTile = this.getPlayerTilePosition();
+        const nearbyChest = this.chests.getChildren().find(chest => {
+          const chestTile = this.getChestTilePosition(chest);
+          return Math.abs(chestTile.x - playerTile.x) <= 1 && Math.abs(chestTile.y - playerTile.y) <= 1;
+        });
+        if (nearbyChest && !nearbyChest.getData("opened")) {
+          if (this.scene.isActive()) {
+            this.scene.launch("ChestScene", { chest: nearbyChest });
+            this.scene.pause();
+          }
+        }
+      }
+
+      this.updateChestPrompt();
     });
     this.physics.add.overlap(this.player, this.enemyManager.getEnemies(), this.handlePlayerEnemyCollision, null, this);
+    this.physics.add.overlap(this.player, this.chests, this.handleChestInteraction, null, this);
+    this.physics.add.overlap(this.player, this.droppedItems, this.handleDroppedItemPickup, null, this);
 
     this.updateCameraBounds();
 
     this.scene.launch("HUDScene");
     this.registry.set('playerHealth', this.playerHealth);
+    this.registry.set('maxHealth', this.maxHealth);
     this.registry.set('noclipMode', this.noclipMode);
     this.registry.set('currentRoom', this.currentRoom);
     this.registry.set('hasLighting', this.hasLighting);
@@ -344,16 +458,222 @@ export default class GameScene extends Phaser.Scene {
     this.registry.set('playerLevel', this.playerLevel);
     this.registry.set('playerXP', this.playerXP);
     this.registry.set('skillPoints', this.skillPoints);
+
+    this.registry.events.on("applySkill", (skillData) => this.applySkill(skillData));
+
+    this.scene.launch("SkillMenuScene", { isInitial: true });
+  }
+
+  findValidSpawnPosition(room) {
+    const maxAttempts = 50;
+    let attempts = 0;
+    let x, y;
+
+    while (attempts < maxAttempts) {
+      x = Phaser.Math.Between(room.getLeft() + 1, room.getRight() - 1);
+      y = Phaser.Math.Between(room.getTop() + 1, room.getBottom() - 1);
+      if (this.dungeon[y]?.[x] === 0) {
+        return { x, y };
+      }
+      attempts++;
+    }
+
+    for (let y = room.getTop(); y <= room.getBottom(); y++) {
+      for (let x = room.getLeft(); x <= room.getRight(); x++) {
+        if (this.dungeon[y]?.[x] === 0) {
+          return { x, y };
+        }
+      }
+    }
+
+    console.error(`No valid spawn position found in room ${room.id}`);
+    return null;
+  }
+
+  spawnChest(room, isDebug = false) {
+    if (!room) {
+      console.error("Cannot spawn chest: Room is undefined");
+      return;
+    }
+
+    let x, y;
+    if (isDebug) {
+      x = Math.floor((room.getLeft() + room.getRight()) / 2);
+      y = Math.floor((room.getTop() + room.getBottom()) / 2);
+      if (this.dungeon[y]?.[x] !== 0) {
+        console.warn(`Debug chest center position (${x}, ${y}) is invalid in room ${room.id}. Finding alternative...`);
+        const pos = this.findValidSpawnPosition(room);
+        if (!pos) return;
+        x = pos.x;
+        y = pos.y;
+      }
+    } else {
+      const pos = this.findValidSpawnPosition(room);
+      if (!pos) return;
+      x = pos.x;
+      y = pos.y;
+    }
+
+    const posX = (x - y) * TILE_SIZE;
+    const posY = (x + y) * (TILE_SIZE / 2);
+    const chestSpriteKey = this.usePlaceholderSprite ? "chest-placeholder" : "chest";
+    const chest = this.chests.create(posX, posY, chestSpriteKey)
+      .setInteractive()
+      .setDepth(posY)
+      .setOrigin(0.5, 0.5)
+      .setVisible(true);
+
+    const itemCount = Phaser.Math.Between(1, 3);
+    chest.setData("itemCount", itemCount);
+    console.log(`Chest spawned at (${posX}, ${posY}) in room ${room.id}, isDebug: ${isDebug}, using sprite: ${chestSpriteKey}, items: ${itemCount}`);
+
+    if (this.hasLighting) {
+      chest.setPipeline('Light2D');
+      const chestLight = this.lights.addLight(posX, posY, 40, 0xffd700, 0.6);
+      chest.setData("light", chestLight);
+    }
+    chest.setData("opened", false);
+  }
+
+  getChestTilePosition(chest) {
+    const tileX = Math.floor((chest.x / TILE_SIZE + chest.y / (TILE_SIZE / 2)) / 2);
+    const tileY = Math.floor((chest.y / (TILE_SIZE / 2) - chest.x / TILE_SIZE) / 2);
+    return { x: tileX, y: tileY };
+  }
+
+  applySkill(skillData) {
+    switch (skillData.type) {
+      case "damage":
+        this.weaponManager.stats.damage *= (1 + skillData.value);
+        break;
+      case "speed":
+        this.playerSpeed += skillData.value;
+        break;
+      case "health":
+        this.maxHealth += skillData.value;
+        this.playerHealth = this.maxHealth;
+        this.registry.set('playerHealth', this.playerHealth);
+        this.registry.set('maxHealth', this.maxHealth);
+        this.registry.events.emit('updateHealth', this.playerHealth);
+        break;
+      case "cooldown":
+        this.shootCooldown = Math.max(100, this.shootCooldown * (1 - skillData.value));
+        this.weaponManager.stats.shootCooldown = this.shootCooldown;
+        break;
+      case "dash":
+        break;
+      default:
+        console.warn(`Unknown skill type: ${skillData.type}`);
+    }
+  }
+
+  applyItemEffect(item) {
+    switch (item.id) {
+      case "dumbBullets":
+        this.weaponManager.enableDumbBullets();
+        console.log("Applied Dumb Bullets: 10% chance to slow enemies on hit");
+        break;
+      case "rapidCharge":
+        this.shootCooldown *= 0.8;
+        this.weaponManager.stats.shootCooldown = this.shootCooldown;
+        console.log(`Applied Rapid Charge: Shoot cooldown reduced to ${this.shootCooldown}`);
+        break;
+      case "regeneration":
+        this.startRegeneration();
+        console.log("Applied Regeneration: +3 health over 8 seconds");
+        break;
+      case "vResistance":
+        this.damageReduction = (this.damageReduction || 0) + 0.1;
+        console.log("Applied V Resistance: Damage taken reduced by 10%");
+        break;
+      case "projectileTaming":
+        this.weaponManager.enableProjectileTaming();
+        console.log("Applied Projectile Taming: Bullets adjust toward enemies");
+        break;
+      default:
+        this.applySkill(item.effect);
+    }
+  }
+
+  startRegeneration() {
+    const totalHealth = 3;
+    const duration = 8000;
+    const tickRate = 1000;
+    const ticks = duration / tickRate;
+    const healthPerTick = totalHealth / ticks;
+
+    this.time.addEvent({
+      delay: tickRate,
+      repeat: ticks - 1,
+      callback: () => {
+        this.playerHealth = Math.min(this.maxHealth, this.playerHealth + healthPerTick);
+        this.registry.set('playerHealth', this.playerHealth);
+        this.registry.events.emit('updateHealth', this.playerHealth);
+        console.log(`Regeneration tick: +${healthPerTick.toFixed(2)} HP, current health: ${this.playerHealth}`);
+      },
+    });
   }
 
   handlePlayerEnemyCollision(player, enemy) {
-    this.playerHealth -= 10 * this.game.loop.delta / 1000;
+    const baseDamage = 10 * this.game.loop.delta / 1000;
+    const damageReduction = this.damageReduction || 0;
+    const reducedDamage = baseDamage * (1 - damageReduction);
+    this.playerHealth -= reducedDamage;
     this.playerHealth = Math.max(0, this.playerHealth);
     this.registry.set('playerHealth', this.playerHealth);
     this.registry.events.emit('updateHealth', this.playerHealth);
     if (this.playerHealth <= 0) {
       this.handlePlayerDeath();
     }
+  }
+
+  handlePlayerDeath() {
+    if (this.hasEnchantedTotem) {
+      this.hasEnchantedTotem = false;
+      this.playerHealth = this.maxHealth * 0.25;
+      this.registry.set('playerHealth', this.playerHealth);
+      this.registry.events.emit('updateHealth', this.playerHealth);
+      console.log("Enchanted Totem activated: Death prevented, health restored to 25%");
+      this.add.text(
+        this.player.x,
+        this.player.y - 20,
+        "Totem Saved You!",
+        {
+          fontSize: "16px",
+          color: "#8B0000",
+          stroke: "#000000",
+          strokeThickness: 3,
+        }
+      ).setOrigin(0.5).setDepth(1001).destroy(2000);
+    } else {
+      console.log("Player died!");
+      this.scene.start("GameOverScene");
+    }
+  }
+
+  levelUp() {
+    this.playerLevel += 1;
+    this.maxHealth += 10;
+    this.playerHealth = Math.min(this.maxHealth, this.playerHealth + 10);
+    this.playerSpeed += 5;
+    this.weaponManager.stats.damage += 0.1;
+    this.shootCooldown = Math.max(100, this.shootCooldown - 5);
+    this.weaponManager.stats.shootCooldown = this.shootCooldown;
+    this.weaponManager.stats.velocity += 5;
+
+    this.registry.set('playerLevel', this.playerLevel);
+    this.registry.set('playerHealth', this.playerHealth);
+    this.registry.set('maxHealth', this.maxHealth);
+    this.registry.set('playerXP', this.playerXP);
+    this.registry.events.emit('levelChanged', this.playerLevel);
+    this.registry.events.emit('updateHealth', this.playerHealth);
+
+    if (this.playerLevel % 5 === 0) {
+      this.scene.launch("SkillMenuScene");
+    }
+
+    const newStats = this.getShotStats();
+    this.weaponManager.updateShotStats(newStats);
   }
 
   debugShoot() {
@@ -364,20 +684,11 @@ export default class GameScene extends Phaser.Scene {
     if (this.weaponManager && this.weaponManager.fireBullet) {
       this.weaponManager.fireBullet(this.player.x, this.player.y, pointer.worldX, pointer.worldY);
       this.lastShotTime = currentTime;
-    } else {
-      console.error("WeaponManager or fireBullet is undefined!");
     }
   }
 
   renderRoom(room) {
     if (!room) return;
-
-    (this.rooms || []).forEach(r => {
-      if (r.minimapText) {
-        r.minimapText.destroy();
-        r.minimapText = null;
-      }
-    });
 
     this.floorTiles.clear(true, true);
     this.wallTiles.clear(true, true);
@@ -403,7 +714,7 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    (this.rooms || []).forEach((r) => {
+    this.rooms.forEach((r) => {
       const centerX = (r.getLeft() + r.getRight()) / 2;
       const centerY = (r.getTop() + r.getBottom()) / 2;
       const markerPosX = (centerX - centerY) * TILE_SIZE;
@@ -414,7 +725,7 @@ export default class GameScene extends Phaser.Scene {
       this.roomMarkers.add(marker);
     });
 
-    (this.rooms || []).forEach((r) => this.environmentManager.spawnTorchesForRoom(r));
+    this.rooms.forEach((r) => this.environmentManager.spawnTorchesForRoom(r));
     this.environmentManager.spawnTorchesForEnclosedSpaces();
     this.environmentManager.spawnTorchesForHallways();
 
@@ -531,8 +842,7 @@ export default class GameScene extends Phaser.Scene {
                 color: "#ffffff",
                 stroke: "#000000",
                 strokeThickness: 3,
-              })
-                .setDepth(1001);
+              }).setDepth(1001);
               this.tweens.add({
                 targets: teleportText,
                 alpha: 0,
@@ -556,25 +866,22 @@ export default class GameScene extends Phaser.Scene {
 
   getShotStats() {
     const velocity = 300 + (this.playerLevel - 1) * 20;
-    const damage = 1 + (this.playerLevel - 1) * 0.2; // Lowered base damage to 1, scaling to 0.2 per level
-    this.shootCooldown = Math.max(100, 300 - (this.playerLevel - 1) * 20); // Minimum cooldown of 100ms
-    console.log(`Shot stats: damage = ${damage}, velocity = ${velocity}, cooldown = ${this.shootCooldown}`);
+    const damage = 1 + (this.playerLevel - 1) * 0.2;
+    this.shootCooldown = Math.max(100, 400 - (this.playerLevel - 1) * 20);
     return { velocity, damage, shootCooldown: this.shootCooldown };
   }
 
   getXPForNextLevel() {
-    const baseXP = 100;
-    const scalingFactor = 1.5;
+    const baseXP = 50;
+    const scalingFactor = 1.2;
     return Math.round(baseXP * Math.pow(scalingFactor, this.playerLevel - 1));
   }
 
   addXP(amount) {
     if (typeof amount !== 'number' || amount <= 0) {
-      console.error(`Invalid XP amount: ${amount}`);
       return;
     }
 
-    console.log(`Adding ${amount} XP to player (Level ${this.playerLevel}, Current XP: ${this.playerXP})`);
     this.playerXP += amount;
 
     const xpText = this.add.text(this.player.x, this.player.y - 40, `+${amount} XP`, {
@@ -604,23 +911,10 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  levelUp() {
-    this.playerLevel += 1;
-    this.skillPoints += 1;
-    console.log(`Player leveled up to Level ${this.playerLevel}! Skill Points: ${this.skillPoints}`);
-
-    this.registry.set('playerLevel', this.playerLevel);
-    this.registry.set('skillPoints', this.skillPoints);
-    this.registry.events.emit('levelChanged', this.playerLevel);
-
-    const newStats = this.getShotStats();
-    this.weaponManager.updateShotStats(newStats);
-  }
-
   update(time, delta) {
     if (!this.player) return;
 
-    const speed = 220;
+    const speed = this.playerSpeed;
     let velocityX = 0, velocityY = 0;
 
     if (this.keys.W.isDown) velocityY -= speed;
@@ -652,6 +946,12 @@ export default class GameScene extends Phaser.Scene {
       this.lastEnemyUpdate = time;
     }
 
+    if (Phaser.Input.Keyboard.JustDown(this.keys.O)) {
+      if (!this.scene.isActive("DebugScene")) {
+        this.scene.launch("DebugScene");
+      }
+    }
+
     if (!this.noclipMode && this.player.body.blocked.none && this.player.body.velocity.lengthSq() < 10) {
       const worldX = Math.floor((this.player.x / TILE_SIZE + this.player.y / (TILE_SIZE / 2)) / 2);
       const worldY = Math.floor((this.player.y / (TILE_SIZE / 2) - this.player.x / TILE_SIZE) / 2);
@@ -677,8 +977,8 @@ export default class GameScene extends Phaser.Scene {
       if (dashX === 0 && dashY === 0) dashX = this.player.flipX ? -200 : 200;
       else {
         const magnitude = Math.sqrt(dashX * dashX + dashY * dashY);
-        dashX = (dashX / magnitude) * 400;
-        dashY = (dashY / magnitude) * 400;
+        dashX = (dashX / magnitude) * (400 + (this.playerLevel * 10));
+        dashY = (dashY / magnitude) * (400 + (this.playerLevel * 10));
       }
       this.player.body.setVelocity(dashX, dashY);
       this.tweens.add({
@@ -722,10 +1022,100 @@ export default class GameScene extends Phaser.Scene {
     this.shootCooldown = stats.shootCooldown;
   }
 
-  handlePlayerDeath() {
-    this.player.setVisible(false);
-    this.player.body.setVelocity(0);
-    this.scene.launch("GameOverScene", { x: this.player.x, y: this.player.y });
-    this.scene.pause();
+  spawnDroppedItem(item, x, y) {
+    const droppedItem = this.droppedItems.create(x, y, item.icon)
+      .setDisplaySize(32, 32)
+      .setDepth(y)
+      .setInteractive();
+    droppedItem.itemData = item;
+    if (this.hasLighting) {
+      droppedItem.setPipeline('Light2D');
+      const itemLight = this.lights.addLight(x, y, 30, 0xffd700, 0.5);
+      droppedItem.setData("light", itemLight);
+    }
+    console.log(`Dropped ${item.name} at (${x}, ${y})`);
+  }
+
+  handleDroppedItemPickup(player, droppedItem) {
+    if (Phaser.Input.Keyboard.JustDown(this.keys.E)) {
+      const hudScene = this.scene.get("HUDScene");
+      if (!hudScene) {
+        console.error("HUDScene not found!");
+        return;
+      }
+
+      if (hudScene.isInventoryFull()) {
+        const fullText = this.add.text(
+          droppedItem.x,
+          droppedItem.y - 20,
+          "Inventory Full!",
+          {
+            fontSize: "14px",
+            color: "#ff0000",
+            stroke: "#000000",
+            strokeThickness: 3,
+            backgroundColor: "rgba(0, 0, 0, 0.7)",
+            padding: { x: 5, y: 2 },
+          }
+        ).setOrigin(0.5).setDepth(1001);
+
+        this.tweens.add({
+          targets: fullText,
+          alpha: 0,
+          duration: 1000,
+          delay: 500,
+          onComplete: () => fullText.destroy(),
+        });
+        console.log(`Cannot pick up ${droppedItem.itemData.name}: Inventory full`);
+        return;
+      }
+
+      if (hudScene.addItemToInventory(droppedItem.itemData)) {
+        // Remove applyItemEffect call here; HUDScene handles passives
+        droppedItem.destroy();
+        if (this.hasLighting) {
+          const light = droppedItem.getData("light");
+          if (light) this.lights.removeLight(light);
+        }
+        console.log(`Picked up ${droppedItem.itemData.name} from the ground`);
+      }
+    }
+  }
+
+  handleChestInteraction(player, chest) {
+    if (Phaser.Input.Keyboard.JustDown(this.keys.E) && !chest.getData("opened")) {
+      if (this.scene.isActive()) {
+        this.scene.launch("ChestScene", { chest });
+        this.scene.pause();
+      } else {
+        console.warn("GameScene is not active, cannot launch ChestScene.");
+      }
+    }
+  }
+
+  updateChestPrompt() {
+    const playerTile = this.getPlayerTilePosition();
+    const nearbyChest = this.chests.getChildren().find(chest => {
+      const chestTile = this.getChestTilePosition(chest);
+      return Math.abs(chestTile.x - playerTile.x) <= 1 && Math.abs(chestTile.y - playerTile.y) <= 1 && !chest.getData("opened");
+    });
+
+    if (nearbyChest) {
+      if (!this.chestPromptText) {
+        this.chestPromptText = this.add.text(nearbyChest.x, nearbyChest.y - 40, "E to open chest", {
+          fontSize: "14px",
+          color: "#ffffff",
+          stroke: "#000000",
+          strokeThickness: 3,
+          backgroundColor: "rgba(0, 0, 0, 0.5)",
+          padding: { x: 5, y: 2 }
+        }).setOrigin(0.5).setDepth(1001);
+      } else {
+        this.chestPromptText.setPosition(nearbyChest.x, nearbyChest.y - 40);
+        this.chestPromptText.setVisible(true);
+      }
+    } else if (this.chestPromptText) {
+      this.chestPromptText.setVisible(false);
+    }
   }
 }
