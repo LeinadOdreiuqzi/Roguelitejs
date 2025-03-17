@@ -5,7 +5,7 @@ import HUDScene from "./scenes/HUDScene";
 import GameOverScene from "./scenes/GameOverScene";
 import SkillMenuScene from "./scenes/SkillMenuScene.js"; // New scene
 import ChestScene from "./scenes/ChestScene.js"; // New scene
-import DebugScene from './scenes/debugScene.js'; // New scene
+import DebugScene from './scenes/DebugScene.js'; // New scene
 
 const config = {
   type: Phaser.WEBGL,
