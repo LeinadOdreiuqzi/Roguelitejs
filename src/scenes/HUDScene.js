@@ -15,7 +15,7 @@ export default class HUDScene extends Phaser.Scene {
     const playerHealth = this.registry.get('playerHealth') || 100;
     const noclipMode = this.registry.get('noclipMode') || false;
     const currentRoom = this.registry.get('currentRoom') || { id: 0, width: 0, height: 0 };
-    const version = "Version 1.2.2: Random Shooting";
+    const version = "Version 1.2.3: Items/Skills";
 
     this.uiManager = new UIManager(this);
     this.uiManager.createUI(playerHealth, noclipMode, version);

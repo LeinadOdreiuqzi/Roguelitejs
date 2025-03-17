@@ -36,6 +36,17 @@ export default class GameScene extends Phaser.Scene {
     this.lastEnemyUpdate = 0;
     this.enemyUpdateInterval = 100;
     this.chestPromptText = null;
+    this.damageReduction = 0;
+    this.deflectChance = 0;
+    this.regenOnKill = 0;
+    this.cloneChance = 0;
+    this.invulnerable = false;
+    this.blockNextHit = false;
+    this.shockwaveOnDamage = null;
+    this.shieldValue = 0;
+    this.shieldOnKillDuration = 0;
+    this.areaEffectRadius = 0;
+    this.weaponManager = new WeaponManager(this, this.getShotStats());
   }
 
   preload() {
@@ -355,7 +366,8 @@ export default class GameScene extends Phaser.Scene {
       C: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.C),
       F: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F),
       E: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E),
-      O: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.O)
+      O: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.O),
+      P: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P)
     };
 
     this.input.on("pointerdown", (pointer) => {
@@ -374,46 +386,12 @@ export default class GameScene extends Phaser.Scene {
     });
     this.physics.add.collider(this.enemyManager.getEnemies(), this.enemyManager.getEnemies());
     this.physics.add.overlap(this.player, this.doorTiles, this.handleDoorTransition, null, this);
-    this.physics.add.overlap(this.bullets, this.enemyManager.enemies, (bullet, enemySprite) => {
-      const enemyData = enemySprite.getData("enemyData");
-      if (enemyData) {
-        this.weaponManager.handleBulletEnemyCollision(bullet, enemySprite); // Delegate to WeaponManager
-        this.addXP(1);
-        if (enemyData.health <= 0) {
-          const isBoss = enemyData.type === "boss";
-          if (isBoss || Phaser.Math.Between(0, 99) < 50) {
-            const enemyTile = this.enemyManager.getEnemyTilePosition(enemySprite);
-            const room = this.rooms.find(room =>
-              enemyTile.x >= room.getLeft() && enemyTile.x <= room.getRight() &&
-              enemyTile.y >= room.getTop() && enemyTile.y <= room.getBottom()
-            );
-            if (room && room !== this.rooms[0]) {
-              console.log(`Enemy drop triggered chest spawn in room ${room.id}`);
-              this.spawnChest(room);
-            } else {
-              console.warn(`Could not find valid room for enemy drop chest spawn at tile (${enemyTile.x}, ${enemyTile.y})`);
-            }
-          }
-        }
-      } else {
-        bullet.destroy();
-      }
-    }, null, this);
+    this.physics.add.overlap(this.bullets, this.enemyManager.enemies, this.handleBulletEnemyCollision, null, this);
+    this.physics.add.overlap(this.player, this.enemyManager.getEnemies(), this.handlePlayerEnemyCollision, null, this);
+    this.physics.add.overlap(this.player, this.chests, this.handleChestInteraction, null, this);
+    this.physics.add.overlap(this.player, this.droppedItems, this.handleDroppedItemPickup, null, this);
 
     this.events.on('update', (time, delta) => {
-      this.enemyManager.enemies.getChildren().forEach(enemySprite => {
-        if (enemySprite.active && enemySprite.healthBar) {
-          this.enemyManager.updateHealthBar(enemySprite);
-          const enemyData = enemySprite.getData("enemyData");
-          if (enemyData && enemyData.lastDamageTime > 0) {
-            const timeSinceLastDamage = time - enemyData.lastDamageTime;
-            if (timeSinceLastDamage > this.enemyManager.healthBarHideTimeout) {
-              enemySprite.healthBar.setVisible(false);
-            }
-          }
-        }
-      });
-
       this.chests.getChildren().forEach(chest => {
         const light = chest.getData("light");
         if (light) {
@@ -442,9 +420,6 @@ export default class GameScene extends Phaser.Scene {
 
       this.updateChestPrompt();
     });
-    this.physics.add.overlap(this.player, this.enemyManager.getEnemies(), this.handlePlayerEnemyCollision, null, this);
-    this.physics.add.overlap(this.player, this.chests, this.handleChestInteraction, null, this);
-    this.physics.add.overlap(this.player, this.droppedItems, this.handleDroppedItemPickup, null, this);
 
     this.updateCameraBounds();
 
@@ -542,12 +517,24 @@ export default class GameScene extends Phaser.Scene {
   }
 
   applySkill(skillData) {
+    if (!skillData || typeof skillData.type !== "string") {
+      console.warn("Invalid skill data provided:", skillData);
+      return;
+    }
+    const weaponRelatedSkills = [
+      "damage", "cooldown", "pierce", "projectileCount", "chainShot", "bounce", "explosion",
+      "grenade", "mine", "largeProjectile", "missile", "shockwaveOnDamage", "chainExplosion",
+      "skyExplosion", "fireTrail", "areaExplosion", "multiExplosion", "deflect", "explosionOnCritical",
+      "laser", "energyExplosion", "meteorBarrage", "damageBoost", "explosiveProjectiles", "areaEffect", "randomEffect"
+    ];
+    if (weaponRelatedSkills.includes(skillData.type)) {
+      this.weaponManager.applySkillEffect(skillData);
+      return;
+    }
     switch (skillData.type) {
-      case "damage":
-        this.weaponManager.stats.damage *= (1 + skillData.value);
-        break;
       case "speed":
-        this.playerSpeed += skillData.value;
+        this.playerSpeed *= (1 + skillData.value);
+        console.log(`Applied skill: Speed increased to ${this.playerSpeed}`);
         break;
       case "health":
         this.maxHealth += skillData.value;
@@ -555,12 +542,67 @@ export default class GameScene extends Phaser.Scene {
         this.registry.set('playerHealth', this.playerHealth);
         this.registry.set('maxHealth', this.maxHealth);
         this.registry.events.emit('updateHealth', this.playerHealth);
-        break;
-      case "cooldown":
-        this.shootCooldown = Math.max(100, this.shootCooldown * (1 - skillData.value));
-        this.weaponManager.stats.shootCooldown = this.shootCooldown;
+        console.log(`Applied skill: Health increased to ${this.maxHealth}`);
         break;
       case "dash":
+        break;
+      case "damageReduction":
+        this.damageReduction = (this.damageReduction || 0) + skillData.value;
+        console.log(`Applied skill: Damage reduction increased to ${this.damageReduction}`);
+        break;
+      case "shield":
+        this.enableShield(skillData.interval, skillData.value);
+        console.log(`Applied skill: Shield enabled with interval ${skillData.interval} and value ${skillData.value}`);
+        break;
+      case "regen":
+        this.startRegeneration(skillData.value);
+        console.log(`Applied skill: Regeneration enabled with value ${skillData.value}`);
+        break;
+      case "survive":
+        this.hasEnchantedTotem = true;
+        console.log(`Applied skill: Survive enabled`);
+        break;
+      case "deflect":
+        this.deflectChance = (this.deflectChance || 0) + skillData.chance;
+        console.log(`Applied skill: Deflect chance increased to ${this.deflectChance}`);
+        break;
+      case "shieldOnKill":
+        this.enableShieldOnKill(skillData.duration);
+        console.log(`Applied skill: Shield on kill enabled with duration ${skillData.duration}`);
+        break;
+      case "regenOnKill":
+        this.regenOnKill = (this.regenOnKill || 0) + skillData.value;
+        console.log(`Applied skill: Regen on kill increased to ${this.regenOnKill}`);
+        break;
+      case "blockNextHit":
+        this.enableBlockNextHit(skillData.interval);
+        console.log(`Applied skill: Block next hit enabled with interval ${skillData.interval}`);
+        break;
+      case "slowEnemies":
+        this.enemyManager.slowEnemies(skillData.value);
+        console.log(`Applied skill: Slow enemies by ${skillData.value}`);
+        break;
+      case "speedBoost":
+        this.enableSpeedBoost(skillData.value, skillData.duration, skillData.interval);
+        console.log(`Applied skill: Speed boost enabled with value ${skillData.value}, duration ${skillData.duration}, interval ${skillData.interval}`);
+        break;
+      case "teleport":
+        this.enableTeleport(skillData.interval);
+        console.log(`Applied skill: Teleport enabled with interval ${skillData.interval}`);
+        break;
+      case "clone":
+        this.enableClone(skillData.chance);
+        console.log(`Applied skill: Clone enabled with chance ${skillData.chance}`);
+        break;
+      case "invulnerability":
+        this.enableInvulnerability(skillData.duration, skillData.interval);
+        console.log(`Applied skill: Invulnerability enabled with duration ${skillData.duration}, interval ${skillData.interval}`);
+        break;
+      case "multiEffect":
+        this.shootCooldown = Math.max(100, this.shootCooldown * (1 - skillData.shootCooldown));
+        this.weaponManager.stats.shootCooldown = this.shootCooldown;
+        this.hasEnchantedTotem = skillData.secondLife;
+        console.log(`Applied skill: Multi-effect (cooldown ${this.shootCooldown}, second life ${skillData.secondLife})`);
         break;
       default:
         console.warn(`Unknown skill type: ${skillData.type}`);
@@ -568,19 +610,41 @@ export default class GameScene extends Phaser.Scene {
   }
 
   applyItemEffect(item) {
+    if (!item || typeof item !== "object" || !item.id || typeof item.id !== "string") {
+      console.warn("Invalid item provided (missing or invalid id):", item);
+      return;
+    }
     switch (item.id) {
       case "dumbBullets":
         this.weaponManager.enableDumbBullets();
         console.log("Applied Dumb Bullets: 10% chance to slow enemies on hit");
         break;
       case "rapidCharge":
+      case "rapidFire":
         this.shootCooldown *= 0.8;
         this.weaponManager.stats.shootCooldown = this.shootCooldown;
-        console.log(`Applied Rapid Charge: Shoot cooldown reduced to ${this.shootCooldown}`);
+        console.log(`Applied Rapid Charge/Fire: Shoot cooldown reduced to ${this.shootCooldown}`);
+        break;
+      case "nimbleHands":
+        this.shootCooldown *= 0.9;
+        this.weaponManager.stats.shootCooldown = this.shootCooldown;
+        console.log(`Applied Nimble Hands: Shoot cooldown reduced to ${this.shootCooldown}`);
+        break;
+      case "boots":
+        this.playerSpeed *= 1.1;
+        console.log(`Applied Boots: Speed increased to ${this.playerSpeed}`);
+        break;
+      case "spikes":
+        this.scene.physics.add.overlap(this.player, this.enemyManager.getEnemies(), (player, enemy) => {
+          const enemyData = enemy.getData("enemyData");
+          enemyData.health -= 5;
+          if (enemyData.health <= 0) enemy.destroy();
+        });
+        console.log("Applied Spikes: Deal damage to enemies on contact");
         break;
       case "regeneration":
-        this.startRegeneration();
-        console.log("Applied Regeneration: +3 health over 8 seconds");
+        this.startRegeneration(0.2);
+        console.log("Applied Regeneration: +24 health over 8 seconds");
         break;
       case "vResistance":
         this.damageReduction = (this.damageReduction || 0) + 0.1;
@@ -591,12 +655,16 @@ export default class GameScene extends Phaser.Scene {
         console.log("Applied Projectile Taming: Bullets adjust toward enemies");
         break;
       default:
-        this.applySkill(item.effect);
+        if (item.effect && typeof item.effect === "object" && item.effect.type) {
+          this.applySkill(item.effect);
+        } else {
+          console.warn(`Item ${item.id} has no valid effect:`, item.effect);
+        }
     }
   }
 
-  startRegeneration() {
-    const totalHealth = 3;
+  startRegeneration(value = 0.03) { // Default value adjusted to match skill system
+    const totalHealth = value * this.maxHealth;
     const duration = 8000;
     const tickRate = 1000;
     const ticks = duration / tickRate;
@@ -614,41 +682,249 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
+  enableShockwaveOnDamage(radius) {
+    this.shockwaveOnDamage = { radius };
+    // Implement logic in handlePlayerEnemyCollision to emit a shockwave when damaged
+  }
+
+  enableShield(interval, value) {
+    this.shieldValue = value;
+    this.time.addEvent({
+      delay: interval * 1000,
+      loop: true,
+      callback: () => {
+        this.playerHealth = Math.min(this.maxHealth, this.playerHealth + this.shieldValue);
+        this.registry.set('playerHealth', this.playerHealth);
+        this.registry.events.emit('updateHealth', this.playerHealth);
+      },
+    });
+  }
+
+  enableShieldOnKill(duration) {
+    this.shieldOnKillDuration = duration;
+    // Implement logic in enemy death handling to apply shield
+  }
+
+  enableBlockNextHit(interval) {
+    this.blockNextHit = true;
+    this.time.addEvent({
+      delay: interval * 1000,
+      loop: true,
+      callback: () => this.blockNextHit = true,
+    });
+    // Implement logic in handlePlayerEnemyCollision to block damage if this.blockNextHit is true
+  }
+
+  enableSpeedBoost(value, duration, interval) {
+    const applyBoost = () => {
+      this.playerSpeed *= (1 + value);
+      this.time.delayedCall(duration * 1000, () => {
+        this.playerSpeed /= (1 + value);
+      });
+    };
+    applyBoost();
+    this.time.addEvent({
+      delay: interval * 1000,
+      loop: true,
+      callback: applyBoost,
+    });
+  }
+
+  enableRandomEffect(interval) {
+    const effects = ["damage", "speed", "cooldown"];
+    this.time.addEvent({
+      delay: interval * 1000,
+      loop: true,
+      callback: () => {
+        const effect = Phaser.Utils.Array.GetRandom(effects);
+        this.applySkill({ type: effect, value: 0.1 });
+      },
+    });
+  }
+
+  enableTeleport(interval) {
+    this.time.addEvent({
+      delay: interval * 1000,
+      loop: true,
+      callback: () => {
+        const room = this.currentRoom;
+        const pos = this.findValidSpawnPosition(room);
+        if (pos) {
+          const posX = (pos.x - pos.y) * TILE_SIZE;
+          const posY = (pos.x + pos.y) * (TILE_SIZE / 2);
+          this.player.setPosition(posX, posY - 10);
+        }
+      },
+    });
+  }
+
+  enableClone(chance) {
+    this.cloneChance = chance;
+    // Implement logic in update to occasionally spawn a clone of the player
+  }
+
+  enableAreaEffect(radius) {
+    this.areaEffectRadius = radius;
+    // Implement logic in update to apply effects to enemies within radius
+  }
+
+  enableInvulnerability(duration, interval) {
+    const applyInvulnerability = () => {
+      this.invulnerable = true;
+      this.time.delayedCall(duration * 1000, () => {
+        this.invulnerable = false;
+      });
+    };
+    applyInvulnerability();
+    this.time.addEvent({
+      delay: interval * 1000,
+      loop: true,
+      callback: applyInvulnerability,
+    });
+    // Use this.invulnerable in handlePlayerEnemyCollision to prevent damage
+  }
+
   handlePlayerEnemyCollision(player, enemy) {
-    const baseDamage = 10 * this.game.loop.delta / 1000;
+    if (this.invulnerable || this.blockNextHit) {
+      this.blockNextHit = false;
+      return;
+    }
+
+    const enemyData = enemy.getData("enemyData");
+    if (!enemyData) {
+      console.warn("Enemy missing enemyData:", enemy);
+      return;
+    }
+
+    // Use enemy-specific damage instead of hardcoded baseDamage
+    const baseDamage = (enemyData.hasRangedAttack ? 0 : enemyData.damage) * this.game.loop.delta / 1000;
     const damageReduction = this.damageReduction || 0;
     const reducedDamage = baseDamage * (1 - damageReduction);
-    this.playerHealth -= reducedDamage;
+
+    // Apply shield if active
+    let remainingDamage = reducedDamage;
+    if (this.shieldValue > 0) {
+      const shieldAbsorbed = Math.min(this.shieldValue, remainingDamage);
+      this.shieldValue -= shieldAbsorbed;
+      remainingDamage -= shieldAbsorbed;
+      console.log(`Shield absorbed ${shieldAbsorbed} damage. Remaining shield: ${this.shieldValue}`);
+    }
+
+    this.playerHealth -= remainingDamage;
     this.playerHealth = Math.max(0, this.playerHealth);
     this.registry.set('playerHealth', this.playerHealth);
     this.registry.events.emit('updateHealth', this.playerHealth);
+
+    if (this.shockwaveOnDamage) {
+      const explosion = this.add.circle(player.x, player.y, this.shockwaveOnDamage.radius, 0xff0000, 0.5)
+        .setDepth(player.y);
+      this.tweens.add({
+        targets: explosion,
+        alpha: 0,
+        duration: 500,
+        onComplete: () => explosion.destroy(),
+      });
+      this.physics.add.overlap(explosion, this.enemyManager.getEnemies(), (explosion, enemy) => {
+        const enemyData = enemy.getData('enemyData');
+        enemyData.health -= 10; // Example damage
+        this.enemyManager.updateHealthBar(enemy);
+        if (enemyData.health <= 0) {
+          this.handleEnemyDeath(enemy);
+        }
+      });
+      console.log(`Shockwave triggered with radius ${this.shockwaveOnDamage.radius}`);
+    }
+
     if (this.playerHealth <= 0) {
       this.handlePlayerDeath();
     }
   }
 
-  handlePlayerDeath() {
-    if (this.hasEnchantedTotem) {
-      this.hasEnchantedTotem = false;
-      this.playerHealth = this.maxHealth * 0.25;
+  handleBulletEnemyCollision(bullet, enemySprite) {
+    const enemyData = enemySprite.getData("enemyData");
+    if (!enemyData) {
+      bullet.destroy();
+      return;
+    }
+
+    // Delegate damage calculation to WeaponManager
+    this.weaponManager.handleBulletEnemyCollision(bullet, enemySprite);
+
+    // Ensure health bar exists and is visible on damage
+    if (!enemySprite.healthBar) {
+      this.enemyManager.createHealthBar(enemySprite, enemyData.type); // Create health bar if missing
+    }
+    if (enemySprite.healthBar) {
+      enemySprite.healthBar.setVisible(true); // Show on damage
+      enemyData.lastDamageTime = this.time.now; // Update last damage time
+      enemySprite.setData("enemyData", enemyData);
+    }
+
+    this.addXP(1);
+
+    if (enemyData.health <= 0) {
+      this.handleEnemyDeath(enemySprite);
+      const isBoss = enemyData.type === "boss";
+      if (isBoss || Phaser.Math.Between(0, 99) < 50) {
+        const enemyTile = this.enemyManager.getEnemyTilePosition(enemySprite);
+        const room = this.rooms.find(room =>
+          enemyTile.x >= room.getLeft() && enemyTile.x <= room.getRight() &&
+          enemyTile.y >= room.getTop() && enemyTile.y <= room.getBottom()
+        );
+        if (room && room !== this.rooms[0]) {
+          console.log(`Enemy drop triggered chest spawn in room ${room.id}`);
+          this.spawnChest(room);
+        } else {
+          console.warn(`Could not find valid room for enemy drop chest spawn at tile (${enemyTile.x}, ${enemyTile.y})`);
+        }
+      }
+    }
+  }
+
+  handleEnemyDeath(enemy) {
+    const enemyData = enemy.getData("enemyData");
+    if (!enemyData) return;
+
+    // Award XP
+    this.playerXP += enemyData.xpValue;
+    this.registry.set('playerXP', this.playerXP);
+    console.log(`Player gained ${enemyData.xpValue} XP. Total XP: ${this.playerXP}`);
+
+    // Check for level up
+    const xpForNextLevel = this.playerLevel * 100; // Example XP threshold
+    if (this.playerXP >= xpForNextLevel) {
+      this.levelUp();
+    }
+
+    // Apply shield on kill
+    if (this.shieldOnKillDuration > 0) {
+      this.shieldValue = Math.max(this.shieldValue, 10); // Example shield value
+      this.time.delayedCall(this.shieldOnKillDuration * 1000, () => {
+        this.shieldValue = Math.max(0, this.shieldValue - 10);
+      });
+      console.log(`Shield on kill applied. Shield value: ${this.shieldValue}`);
+    }
+
+    // Apply regen on kill
+    if (this.regenOnKill > 0) {
+      this.playerHealth = Math.min(this.maxHealth, this.playerHealth + this.regenOnKill);
       this.registry.set('playerHealth', this.playerHealth);
       this.registry.events.emit('updateHealth', this.playerHealth);
-      console.log("Enchanted Totem activated: Death prevented, health restored to 25%");
-      this.add.text(
-        this.player.x,
-        this.player.y - 20,
-        "Totem Saved You!",
-        {
-          fontSize: "16px",
-          color: "#8B0000",
-          stroke: "#000000",
-          strokeThickness: 3,
-        }
-      ).setOrigin(0.5).setDepth(1001).destroy(2000);
-    } else {
-      console.log("Player died!");
-      this.scene.start("GameOverScene");
+      console.log(`Regen on kill: +${this.regenOnKill} HP. Current health: ${this.playerHealth}`);
     }
+
+    // Chain kill tracking
+    const currentTime = this.time.now;
+    if (currentTime - this.lastKillTime < 2000) { // 2-second window for chain kill
+      this.chainKillCount++;
+    } else {
+      this.chainKillCount = 1;
+    }
+    this.lastKillTime = currentTime;
+
+    if (enemy.healthBar) enemy.healthBar.destroy();
+    enemy.destroy();
+    console.log("Enemy destroyed");
   }
 
   levelUp() {
@@ -669,7 +945,7 @@ export default class GameScene extends Phaser.Scene {
     this.registry.events.emit('updateHealth', this.playerHealth);
 
     if (this.playerLevel % 5 === 0) {
-      this.scene.launch("SkillMenuScene");
+      this.scene.launch("SkillMenuScene", { level: this.playerLevel });
     }
 
     const newStats = this.getShotStats();
@@ -927,7 +1203,6 @@ export default class GameScene extends Phaser.Scene {
       velocityX = (velocityX / magnitude) * speed;
       velocityY = (velocityY / magnitude) * speed;
     }
-
     const isoVelocityX = (velocityX - velocityY) * 0.85;
     const isoVelocityY = (velocityX + velocityY) * 0.6;
     this.player.body.setVelocity(isoVelocityX, isoVelocityY);
@@ -946,7 +1221,33 @@ export default class GameScene extends Phaser.Scene {
       this.lastEnemyUpdate = time;
     }
 
-    if (Phaser.Input.Keyboard.JustDown(this.keys.O)) {
+    // Update enemy health bars every frame for smooth tracking
+    this.enemyManager.enemies.getChildren().forEach(enemySprite => {
+      if (!enemySprite.active || !enemySprite.healthBar) return;
+
+      const enemyData = enemySprite.getData("enemyData");
+      if (!enemyData) return;
+
+      // Update health bar position and visibility every frame
+      this.enemyManager.updateHealthBar(enemySprite);
+
+      // Manage visibility timeout (moved here for consistency)
+      if (enemyData.lastDamageTime > 0) {
+        const timeSinceDamage = time - enemyData.lastDamageTime;
+        if (timeSinceDamage > this.enemyManager.healthBarHideTimeout && enemyData.type !== "boss") {
+          enemySprite.healthBar.setVisible(false);
+          enemyData.lastDamageTime = 0; // Reset timeout
+          enemySprite.setData("enemyData", enemyData);
+        }
+      }
+
+      // Ensure boss health bars remain visible
+      if (enemyData.type === "boss") {
+        enemySprite.healthBar.setVisible(true);
+      }
+    });
+
+    if (Phaser.Input.Keyboard.JustDown(this.keys.P)) {
       if (!this.scene.isActive("DebugScene")) {
         this.scene.launch("DebugScene");
       }

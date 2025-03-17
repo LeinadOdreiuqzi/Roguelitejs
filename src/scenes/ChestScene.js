@@ -16,7 +16,6 @@ export default class ChestScene extends Phaser.Scene {
   }
 
   createPlaceholderIcons() {
-    // Same as before...
     const rapidFireGraphics = this.make.graphics({ x: 0, y: 0, add: false });
     rapidFireGraphics.fillStyle(0x00BFFF, 1);
     rapidFireGraphics.fillRect(8, 8, 16, 16);
@@ -69,7 +68,7 @@ export default class ChestScene extends Phaser.Scene {
       duration: 300,
       ease: "Power2",
     });
-  
+
     const title = this.add.text(
       this.cameras.main.centerX,
       this.cameras.main.centerY - 150,
@@ -87,7 +86,7 @@ export default class ChestScene extends Phaser.Scene {
       duration: 300,
       ease: "Power2",
     });
-  
+
     const commonItems = [
       { id: "rapidFire", name: "Rapid Fire", icon: "rapidFireIcon", effect: { type: "projectileSpeed", value: 0.1 }, rarity: "common", color: "#00BFFF" },
       { id: "nimbleHands", name: "Nimble Hands", icon: "nimbleHandsIcon", effect: { type: "shootCooldown", value: 0.05 }, rarity: "common", color: "#00BFFF" },
@@ -117,9 +116,9 @@ export default class ChestScene extends Phaser.Scene {
       { id: "thirdAnniversarySword", name: "Third Anniversary Sword", icon: "spikesIcon", rarity: "ultimate", color: "#8B0000" },
       { id: "enchantedTotem", name: "Enchanted Totem", icon: "nimbleHandsIcon", rarity: "ultimate", color: "#8B0000" },
     ];
-  
+
     const itemCount = this.chest.getData("itemCount") || 1;
-  
+
     const items = [];
     for (let i = 0; i < itemCount; i++) {
       const roll = Phaser.Math.Between(0, 999);
@@ -132,13 +131,13 @@ export default class ChestScene extends Phaser.Scene {
       const item = Phaser.Utils.Array.GetRandom(itemPool);
       items.push(item);
     }
-  
+
     const slotWidth = 80;
     const slotHeight = 80;
     const slotSpacing = 20;
     const startX = this.cameras.main.centerX - ((itemCount - 1) * (slotWidth + slotSpacing)) / 2;
     const startY = this.cameras.main.centerY - 50;
-  
+
     this.slots = [];
     items.forEach((item, i) => {
       const slot = this.add.rectangle(
@@ -153,7 +152,7 @@ export default class ChestScene extends Phaser.Scene {
         .setDepth(1001)
         .setInteractive()
         .setAlpha(0);
-  
+
       this.tweens.add({
         targets: slot,
         alpha: 1,
@@ -161,14 +160,14 @@ export default class ChestScene extends Phaser.Scene {
         delay: i * 100,
         ease: "Power2",
       });
-  
+
       slot.on("pointerover", () => {
         if (slot.isInteractive) slot.setFillStyle(0x555555);
       });
       slot.on("pointerout", () => {
         if (slot.isInteractive) slot.setFillStyle(0x333333);
       });
-  
+
       const itemIcon = this.add.image(slot.x, slot.y - 10, item.icon)
         .setDisplaySize(40, 40)
         .setScrollFactor(0)
@@ -180,7 +179,7 @@ export default class ChestScene extends Phaser.Scene {
         stroke: "#000000",
         strokeThickness: 2,
       }).setOrigin(0.5).setScrollFactor(0).setDepth(1002).setAlpha(0);
-  
+
       this.tweens.add({
         targets: [itemIcon, itemText],
         alpha: 1,
@@ -188,7 +187,7 @@ export default class ChestScene extends Phaser.Scene {
         delay: i * 100 + 100,
         ease: "Power2",
       });
-  
+
       slot.isInteractive = true;
       slot.on("pointerdown", () => {
         if (slot.isInteractive) {
@@ -197,7 +196,7 @@ export default class ChestScene extends Phaser.Scene {
             console.error("HUDScene not found!");
             return;
           }
-  
+
           if (hudScene.isInventoryFull()) {
             const fullText = this.add.text(
               slot.x,
@@ -212,7 +211,7 @@ export default class ChestScene extends Phaser.Scene {
                 padding: { x: 5, y: 2 },
               }
             ).setOrigin(0.5).setDepth(1003).setAlpha(0);
-  
+
             this.tweens.add({
               targets: fullText,
               alpha: 1,
@@ -224,7 +223,7 @@ export default class ChestScene extends Phaser.Scene {
             console.log(`Cannot collect ${item.name}: Inventory full`);
             return;
           }
-  
+
           if (hudScene.addItemToInventory(item)) {
             const particles = this.add.particles(slot.x, slot.y, null, {
               frame: null,
@@ -237,7 +236,7 @@ export default class ChestScene extends Phaser.Scene {
               blendMode: "ADD",
             });
             this.time.delayedCall(500, () => particles.destroy());
-  
+
             this.tweens.add({
               targets: [itemIcon, itemText],
               alpha: 0.3,
@@ -252,10 +251,10 @@ export default class ChestScene extends Phaser.Scene {
           }
         }
       });
-  
+
       this.slots.push(slot);
     });
-  
+
     const closeButton = this.add.rectangle(
       this.cameras.main.centerX,
       this.cameras.main.centerY + 120,
@@ -271,7 +270,7 @@ export default class ChestScene extends Phaser.Scene {
       .on("pointerdown", () => this.closeChest())
       .on("pointerover", () => closeButton.setFillStyle(0x333333))
       .on("pointerout", () => closeButton.setFillStyle(0x000000));
-  
+
     const closeText = this.add.text(
       this.cameras.main.centerX,
       this.cameras.main.centerY + 120,
@@ -283,7 +282,7 @@ export default class ChestScene extends Phaser.Scene {
         strokeThickness: 2,
       }
     ).setOrigin(0.5).setScrollFactor(0).setDepth(1002).setAlpha(0);
-  
+
     this.tweens.add({
       targets: [closeButton, closeText],
       alpha: 1,
@@ -291,38 +290,8 @@ export default class ChestScene extends Phaser.Scene {
       delay: 300,
       ease: "Power2",
     });
-  
+
     this.input.keyboard.on("keydown-E", () => this.closeChest());
-  }
-
-  applyItem(type, value) {
-    const gameScene = this.scene.get("GameScene");
-    if (!gameScene) {
-      console.error("GameScene not found!");
-      return;
-    }
-
-    switch (type) {
-      case "projectileSpeed":
-        gameScene.weaponManager.stats.velocity *= (1 + value);
-        console.log(`Applied ${type} item, new projectile speed = ${gameScene.weaponManager.stats.velocity}`);
-        break;
-      case "shootCooldown":
-        gameScene.shootCooldown *= (1 - value);
-        gameScene.weaponManager.stats.shootCooldown = gameScene.shootCooldown;
-        console.log(`Applied ${type} item, new shoot cooldown = ${gameScene.shootCooldown}`);
-        break;
-      case "speed":
-        gameScene.playerSpeed *= (1 + value);
-        console.log(`Applied ${type} item, new speed = ${gameScene.playerSpeed}`);
-        break;
-      case "damage":
-        gameScene.weaponManager.stats.damage *= (1 + value);
-        console.log(`Applied ${type} item, new damage = ${gameScene.weaponManager.stats.damage}`);
-        break;
-      default:
-        console.warn(`Unknown item type: ${type}`);
-    }
   }
 
   closeChest() {

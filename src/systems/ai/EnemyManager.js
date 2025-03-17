@@ -16,7 +16,8 @@ export class EnemyManager {
       enemy1.body.setVelocity(0, 0);
       enemy2.body.setVelocity(0, 0);
     });
-    this.healthBarHideTimeout = 3000;
+    this.healthBarHideTimeout = 3000; // 3 seconds timeout
+    this.clones = this.scene.physics.add.group();
   }
 
   getEnemyStats(type) {
@@ -58,6 +59,7 @@ export class EnemyManager {
       maxHealth: stats.health,
       type,
       speed: stats.speed * (personality === "reckless" ? 1.2 : personality === "cautious" ? 0.8 : 1),
+      baseSpeed: stats.speed,
       attackRange: stats.attackRange * (personality === "aggressive" ? 1.2 : personality === "cautious" ? 0.8 : 1),
       attackCooldown: stats.attackCooldown * (personality === "reckless" ? 0.8 : personality === "cautious" ? 1.2 : 1),
       damage: stats.damage * (personality === "aggressive" ? 1.2 : personality === "reckless" ? 0.8 : 1),
@@ -74,6 +76,7 @@ export class EnemyManager {
       lastSleepParticleTime: 0,
       xpValue: stats.xpValue,
       lastDamageTime: 0,
+      lastHealthUpdate: 0, // Track last health update for optimization
     };
 
     enemySprite.setData("enemyData", enemyData);
@@ -83,16 +86,86 @@ export class EnemyManager {
     enemySprite.body.setSize(width, height).setOffset((width - 16) / 2, height - 8);
     enemySprite.state = "PATROL";
 
+    // Create health bar
+    this.createHealthBar(enemySprite, type);
+
+    const difficultyMultiplier = this.calculateDifficultyMultiplier(stats.health);
+    enemySprite.setData('difficultyMultiplier', difficultyMultiplier);
+
+    return enemySprite;
+  }
+
+  calculateDifficultyMultiplier(health) {
+    if (health > 300) return 3; // Boss
+    if (health > 150) return 2; // Elite
+    if (health > 50) return 1.5; // Mid-tier
+    return 1; // Normal
+  }
+
+  createHealthBar(enemySprite, type) {
     const healthBarWidth = type === "boss" ? 60 : type === "heavy" ? 40 : 20;
     const healthBarHeight = type === "boss" ? 6 : 4;
     const healthBar = this.scene.add.graphics();
-    healthBar.setVisible(type === "boss"); // Always visible for boss
+    healthBar.setVisible(type === "boss"); // Boss health bars always visible
     enemySprite.healthBar = healthBar;
     enemySprite.healthBarWidth = healthBarWidth;
     enemySprite.healthBarHeight = healthBarHeight;
-    this.updateHealthBar(enemySprite);
+    this.updateHealthBar(enemySprite); // Initialize health bar
+  }
 
-    return enemySprite;
+  spawnClone(x, y) {
+    const clone = this.clones.create(x, y, this.scene.usePlaceholderSprite ? "player-placeholder" : "player-front")
+      .setOrigin(0.5, 0.8)
+      .setDepth(y);
+    clone.body.setSize(16, 12).setOffset(6, 16);
+    if (this.scene.hasLighting) clone.setPipeline('Light2D');
+
+    this.scene.time.addEvent({
+      delay: 1000,
+      loop: true,
+      callback: () => {
+        const closestEnemy = this.findClosestEnemy(clone.x, clone.y);
+        if (closestEnemy) {
+          this.scene.weaponManager.fireBullet(clone.x, clone.y, closestEnemy.x, closestEnemy.y);
+        }
+      },
+    });
+
+    this.scene.time.delayedCall(10000, () => clone.destroy(), [], this);
+    console.log("Player clone spawned");
+  }
+
+  findClosestEnemy(x, y) {
+    const enemies = this.enemies.getChildren();
+    let closestEnemy = null;
+    let minDistance = Infinity;
+
+    enemies.forEach(enemy => {
+      if (enemy.active) {
+        const distance = Phaser.Math.Distance.Between(x, y, enemy.x, enemy.y);
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestEnemy = enemy;
+        }
+      }
+    });
+
+    return closestEnemy;
+  }
+
+  slowEnemies(value) {
+    this.enemies.getChildren().forEach(enemySprite => {
+      const enemyData = enemySprite.getData("enemyData");
+      if (enemyData) {
+        enemyData.speed = enemyData.baseSpeed * (1 - value);
+        this.scene.time.delayedCall(5000, () => {
+          if (enemySprite.active) {
+            enemyData.speed = enemyData.baseSpeed;
+          }
+        }, [], this);
+      }
+    });
+    console.log(`Enemies slowed by ${value * 100}% for 5 seconds`);
   }
 
   updateHealthBar(enemySprite) {
@@ -104,8 +177,9 @@ export class EnemyManager {
     const barHeight = enemySprite.healthBarHeight;
     healthBar.clear();
 
+    // Position health bar above enemy (updated dynamically)
     const x = enemySprite.x - barWidth / 2;
-    const y = enemySprite.y - enemySprite.height / 2 - 10;
+    const y = enemySprite.y - enemySprite.height - 10;
 
     healthBar.fillStyle(0xff0000, 1);
     healthBar.fillRect(x, y, barWidth, barHeight);
@@ -118,7 +192,7 @@ export class EnemyManager {
     healthBar.lineStyle(1, 0x000000, 1);
     healthBar.strokeRect(x, y, barWidth, barHeight);
 
-    healthBar.setDepth(enemySprite.y + 1);
+    healthBar.setDepth(enemySprite.y + 1); // Ensure depth updates with enemy position
   }
 
   showDamageNumber(enemySprite, damage) {
@@ -235,6 +309,31 @@ export class EnemyManager {
 
     this.lastPathUpdate = time;
 
+    // Handle area effect damage
+    if (this.scene.areaEffectRadius > 0) {
+      this.enemies.getChildren().forEach(enemySprite => {
+        const distance = Phaser.Math.Distance.Between(this.scene.player.x, this.scene.player.y, enemySprite.x, enemySprite.y);
+        if (distance <= this.scene.areaEffectRadius) {
+          const enemyData = enemySprite.getData("enemyData");
+          enemyData.health -= this.scene.weaponManager.stats.damage * 0.5;
+          enemyData.lastDamageTime = time;
+          enemySprite.setData("enemyData", enemyData);
+          this.updateHealthBar(enemySprite); // Update health bar on damage
+          if (enemySprite.healthBar) enemySprite.healthBar.setVisible(true);
+          if (enemyData.health <= 0) {
+            if (enemySprite.healthBar) enemySprite.healthBar.destroy();
+            enemySprite.destroy();
+            console.log("Enemy destroyed by area effect");
+          }
+        }
+      });
+    }
+
+    // Handle clone spawning
+    if (this.scene.cloneChance > 0 && Phaser.Math.Between(0, 99) < this.scene.cloneChance * 100) {
+      this.spawnClone(this.scene.player.x + Phaser.Math.Between(-50, 50), this.scene.player.y + Phaser.Math.Between(-50, 50));
+    }
+
     this.enemies.getChildren().forEach(enemySprite => {
       const enemyData = enemySprite.getData("enemyData");
       if (!enemyData || !enemySprite.active || !enemySprite.visible) return;
@@ -281,6 +380,15 @@ export class EnemyManager {
       }
 
       this.returnToMapIfOutOfBounds(enemySprite);
+
+      // Manage health bar visibility timeout
+      if (enemySprite.healthBar && enemyData.lastDamageTime > 0) {
+        const timeSinceDamage = time - enemyData.lastDamageTime;
+        if (timeSinceDamage > this.healthBarHideTimeout && enemyData.type !== "boss") {
+          enemySprite.healthBar.setVisible(false);
+          enemyData.lastDamageTime = 0; // Reset to avoid repeated checks
+        }
+      }
     });
   }
 
